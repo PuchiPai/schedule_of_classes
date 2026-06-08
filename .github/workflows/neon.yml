@@ -46,10 +46,19 @@ jobs:
           branch_name: preview/pr-${{ github.event.number }}-${{ needs.setup.outputs.branch }}
           api_key: ${{ secrets.NEON_API_KEY }}
           expires_at: ${{ env.EXPIRES_AT }}
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14.3'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
       - name: Run Migrations
         run: python manage.py migrate
         env:
           DATABASE_URL: ${{ steps.create_neon_branch.outputs.db_url_with_pooler }}
+          DJANGO_SETTINGS_MODULE: config.settings
 
 # The step above creates a new Neon branch.
 # You may want to do something with the new branch, such as run migrations, run tests
