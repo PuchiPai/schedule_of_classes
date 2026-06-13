@@ -1,0 +1,44 @@
+{% extends 'schedule/base.html' %}
+
+{% block title %}Загрузка {{ room.name }}{% endblock %}
+
+{% block content %}
+<h1>Загрузка аудитории {{ room.name }}</h1>
+
+<p class="muted">
+    {{ room.building.name }} · {{ room.get_room_type_display }} · {{ room.capacity }} мест
+</p>
+
+<table>
+    <thead>
+        <tr>
+            <th>Дата</th>
+            <th>День недели</th>
+            <th>Пара</th>
+            <th>Группа</th>
+            <th>Предмет</th>
+            <th>Тип занятия</th>
+            <th>Преподаватель</th>
+            <th>Чётность</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for entry in schedule %}
+            <tr>
+                <td>{{ entry.working_day.date }}</td>
+                <td>{{ entry.working_day.get_weekday_display }}</td>
+                <td>{{ entry.time_slot.pair_number }}</td>
+                <td>{{ entry.student_group.name }}</td>
+                <td>{{ entry.teacher_assignment.discipline.name }}</td>
+                <td>{{ entry.teacher_assignment.lesson_type.name }}</td>
+                <td>{{ entry.teacher_assignment.teacher.full_name }}</td>
+                <td>{{ entry.get_week_parity_display }}</td>
+            </tr>
+        {% empty %}
+            <tr>
+                <td colspan="8">Эта аудитория пока свободна.</td>
+            </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

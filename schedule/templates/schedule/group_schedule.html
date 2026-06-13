@@ -1,0 +1,52 @@
+{% extends 'schedule/base.html' %}
+
+{% block title %}Расписание {{ group.name }}{% endblock %}
+
+{% block content %}
+<h1>Расписание группы {{ group.name }}</h1>
+
+<p class="muted">
+    {% if group.academic_group %}
+        Академическая группа: {{ group.academic_group.name }}
+    {% endif %}
+</p>
+
+<table>
+    <thead>
+        <tr>
+            <th>Дата</th>
+            <th>День недели</th>
+            <th>Пара</th>
+            <th>Предмет</th>
+            <th>Тип занятия</th>
+            <th>Преподаватель</th>
+            <th>Место проведения</th>
+            <th>Чётность</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for entry in schedule %}
+            <tr>
+                <td>{{ entry.working_day.date }}</td>
+                <td>{{ entry.working_day.get_weekday_display }}</td>
+                <td>{{ entry.time_slot.pair_number }}</td>
+                <td>{{ entry.teacher_assignment.discipline.name }}</td>
+                <td>{{ entry.teacher_assignment.lesson_type.name }}</td>
+                <td>{{ entry.teacher_assignment.teacher.full_name }}</td>
+                <td>
+                    {% if entry.room %}
+                        {{ entry.room.building.name }}, {{ entry.room.name }}
+                    {% else %}
+                        Онлайн
+                    {% endif %}
+                </td>
+                <td>{{ entry.get_week_parity_display }}</td>
+            </tr>
+        {% empty %}
+            <tr>
+                <td colspan="8">Расписание пока пустое.</td>
+            </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}
