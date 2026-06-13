@@ -1,0 +1,61 @@
+{% extends 'schedule/base.html' %}
+
+{% block title %}Загрузка аудиторий{% endblock %}
+
+{% block content %}
+<h1>Сводная занятость учебных помещений</h1>
+
+<h2>По типу помещений</h2>
+<table>
+    <thead>
+        <tr>
+            <th>Тип</th>
+            <th>Количество записей</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in by_room_type %}
+            <tr>
+                <td>{{ row.room__room_type }}</td>
+                <td>{{ row.total }}</td>
+            </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<h2>По корпусам</h2>
+<table>
+    <thead>
+        <tr>
+            <th>Корпус</th>
+            <th>Количество записей</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in by_building %}
+            <tr>
+                <td>{{ row.room__building__name }}</td>
+                <td>{{ row.total }}</td>
+            </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<h2>По времени (парам)</h2>
+<table>
+    <thead>
+        <tr>
+            <th>Пара</th>
+            <th>Количество записей</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in by_time %}
+            <tr>
+                <td>{{ row.time_slot__pair_number }}</td>
+                <td>{{ row.total }}</td>
+            </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

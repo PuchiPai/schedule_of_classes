@@ -1,0 +1,65 @@
+{% extends 'schedule/base.html' %}
+
+{% block title %}Консультации / зачёты / экзамены{% endblock %}
+
+{% block content %}
+<h1>Расписание консультаций, зачётов и экзаменов</h1>
+
+<div class="card">
+    <a href="?kind=all">Все</a> |
+    <a href="?kind=consultation">Консультации</a> |
+    <a href="?kind=credit">Зачёты</a> |
+    <a href="?kind=exam">Экзамены</a>
+</div>
+
+<form method="get" class="card">
+    <input type="hidden" name="kind" value="{{ kind }}">
+    <strong>Фильтр по группам:</strong><br><br>
+    {% for group in all_groups %}
+        <label style="display:block; margin-bottom:6px;">
+            <input type="checkbox" name="group" value="{{ group.id }}"
+                   {% if group.id|stringformat:"s" in selected_ids %}checked{% endif %}>
+            {{ group.name }}
+        </label>
+    {% endfor %}
+    <br>
+    <button type="submit">Показать</button>
+</form>
+
+<table>
+    <thead>
+        <tr>
+            <th>Дата</th>
+            <th>Пара</th>
+            <th>Группа</th>
+            <th>Предмет</th>
+            <th>Тип занятия</th>
+            <th>Преподаватель</th>
+            <th>Место</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for entry in entries %}
+            <tr>
+                <td>{{ entry.working_day.date }}</td>
+                <td>{{ entry.time_slot.pair_number }}</td>
+                <td>{{ entry.student_group.name }}</td>
+                <td>{{ entry.teacher_assignment.discipline.name }}</td>
+                <td>{{ entry.teacher_assignment.lesson_type.name }}</td>
+                <td>{{ entry.teacher_assignment.teacher.full_name }}</td>
+                <td>
+                    {% if entry.room %}
+                        {{ entry.room.building.name }}, {{ entry.room.name }}
+                    {% else %}
+                        Онлайн
+                    {% endif %}
+                </td>
+            </tr>
+        {% empty %}
+            <tr>
+                <td colspan="7">Записей нет.</td>
+            </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

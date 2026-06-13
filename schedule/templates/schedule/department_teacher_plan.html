@@ -1,0 +1,52 @@
+{% extends 'schedule/base.html' %}
+
+{% block title %}План кафедры{% endblock %}
+
+{% block content %}
+<h1>План занятости преподавателей</h1>
+<p class="muted">{{ department.name }}</p>
+
+{% for teacher in teachers %}
+    <div class="card">
+        <h2>{{ teacher.full_name }}</h2>
+        <p class="muted">{{ teacher.position }} · {{ teacher.academic_degree }} · {{ teacher.academic_title }}</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Дата</th>
+                    <th>Пара</th>
+                    <th>Группа</th>
+                    <th>Предмет</th>
+                    <th>Тип занятия</th>
+                    <th>Место</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for entry in teacher_entries %}
+                    {% if entry.teacher_assignment.teacher_id == teacher.id %}
+                        <tr>
+                            <td>{{ entry.working_day.date }}</td>
+                            <td>{{ entry.time_slot.pair_number }}</td>
+                            <td>{{ entry.student_group.name }}</td>
+                            <td>{{ entry.teacher_assignment.discipline.name }}</td>
+                            <td>{{ entry.teacher_assignment.lesson_type.name }}</td>
+                            <td>
+                                {% if entry.room %}
+                                    {{ entry.room.building.name }}, {{ entry.room.name }}
+                                {% else %}
+                                    Онлайн
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endif %}
+                {% empty %}
+                    <tr>
+                        <td colspan="6">У преподавателя нет занятий.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+{% endfor %}
+{% endblock %}
