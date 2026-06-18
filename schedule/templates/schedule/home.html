@@ -1,0 +1,49 @@
+{% extends 'schedule/base.html' %}
+
+{% block title %}Главная — Расписание{% endblock %}
+
+{% block content %}
+<h1>Расписание учебных занятий</h1>
+
+<h2>Учебные группы</h2>
+{% for group in groups %}
+    <div class="card">
+        <strong>{{ group.name }}</strong>
+        <div class="muted">
+            {% if group.academic_group %}
+                Академическая группа: {{ group.academic_group.name }}
+            {% else %}
+                Академическая группа не указана
+            {% endif %}
+        </div>
+        <div>Студентов: {{ group.student_count }}</div>
+        <a href="{% url 'schedule:group_schedule' group.id %}">Открыть расписание</a>
+    </div>
+{% empty %}
+    <p>Групп пока нет.</p>
+{% endfor %}
+
+<h2>Преподаватели</h2>
+{% for teacher in teachers %}
+    <div class="card">
+        <strong>{{ teacher.full_name }}</strong>
+        <div class="muted">{{ teacher.position }}</div>
+        <a href="{% url 'schedule:teacher_schedule' teacher.id %}">Открыть нагрузку</a>
+    </div>
+{% empty %}
+    <p>Преподавателей пока нет.</p>
+{% endfor %}
+
+<h2>Аудитории</h2>
+{% for room in rooms %}
+    <div class="card">
+        <strong>{{ room.name }}</strong>
+        <div class="muted">
+            {{ room.building.name }} · {{ room.get_room_type_display }} · {{ room.capacity }} мест
+        </div>
+        <a href="{% url 'schedule:room_load' room.id %}">Открыть загрузку</a>
+    </div>
+{% empty %}
+    <p>Аудиторий пока нет.</p>
+{% endfor %}
+{% endblock %}

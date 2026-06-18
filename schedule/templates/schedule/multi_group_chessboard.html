@@ -1,0 +1,59 @@
+{% extends 'schedule/base.html' %}
+
+{% block title %}Шахматная ведомость{% endblock %}
+
+{% block content %}
+<h1>Шахматная ведомость нескольких групп</h1>
+
+<form method="get" class="card">
+    <strong>Выбери группы:</strong><br><br>
+    {% for group in all_groups %}
+        <label style="display:block; margin-bottom:6px;">
+            <input type="checkbox" name="group" value="{{ group.id }}"
+                   {% if group.id|stringformat:"s" in selected_ids %}checked{% endif %}>
+            {{ group.name }}
+        </label>
+    {% endfor %}
+    <br>
+    <button type="submit">Показать</button>
+</form>
+
+{% if groups %}
+    <table>
+        <thead>
+            <tr>
+                <th>Дата</th>
+                <th>Пара</th>
+                {% for group in groups %}
+                    <th>{{ group.name }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for day in board %}
+                {% for row in day.rows %}
+                    <tr>
+                        <td>{{ day.working_day.date }}</td>
+                        <td>{{ row.time_slot.pair_number }}</td>
+
+                        {% for cell in row.cells %}
+                            <td>
+                                {% if cell %}
+                                    <strong>{{ cell.teacher_assignment.discipline.name }}</strong><br>
+                                    {{ cell.teacher_assignment.lesson_type.name }}<br>
+                                    {{ cell.teacher_assignment.teacher.full_name }}<br>
+                                    {% if cell.room %}
+                                        {{ cell.room.name }}
+                                    {% else %}
+                                        Онлайн
+                                    {% endif %}
+                                {% endif %}
+                            </td>
+                        {% endfor %}
+                    </tr>
+                {% endfor %}
+            {% endfor %}
+        </tbody>
+    </table>
+{% endif %}
+{% endblock %}
