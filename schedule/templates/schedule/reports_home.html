@@ -1,0 +1,30 @@
+{% extends 'schedule/base.html' %}
+
+{% block title %}Отчёты{% endblock %}
+
+{% block content %}
+<h1>Отчёты</h1>
+
+<div class="card">
+    <a href="{% url 'schedule:multi_group_chessboard' %}">Шахматная ведомость нескольких групп</a>
+</div>
+
+<div class="card">
+    <a href="{% url 'schedule:attestation_schedule' %}">Расписание консультаций, зачётов и экзаменов</a>
+</div>
+
+<div class="card">
+    <a href="{% url 'schedule:room_summary' %}">Сводная занятость аудиторий</a>
+</div>
+
+<h2>План занятости преподавателей по подразделениям</h2>
+{% for department in departments %}
+    <div class="card">
+        <a href="{% url 'schedule:department_teacher_plan' department.id %}">
+            {{ department.name }}
+        </a>
+    </div>
+{% empty %}
+    <p>Подразделений пока нет.</p>
+{% endfor %}
+{% endblock %}
