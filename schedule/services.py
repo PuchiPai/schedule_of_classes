@@ -1,11 +1,13 @@
 from collections import defaultdict
 from math import ceil
+from datetime import date, datetime
 
 from django.db import transaction, IntegrityError
 from django.core.exceptions import ValidationError
 from django.db.models import Q, Count
 
 from .models import (
+    Semester,
     ScheduleEntry,
     StudentGroup,
     TeacherAssignment,
@@ -15,12 +17,87 @@ from .models import (
     LessonType,
     Room,
     AcademicGroup,
-    Teacher
-
+    Teacher,
+    BuildingDistance,
 )
 
 import logging
+
 logger = logging.getLogger(__name__)
+
+MAX_PAIRS_PER_DAY = 5
+
+
+def get_active_semester():
+    """
+    Возвращает активный семестр.
+    Если есть семестр, который уже начался, берём последний по start_date.
+    Иначе — самый поздний из созданных.
+    """
+    today = date.today()
+    semester = Semester.objects.filter(start_date__lte=today).order_by('-start_date').first()
+    if semester:
+        return semester
+    return Semester.objects.order_by('-start_date').first()
+
+
+def _slot_minutes(slot: TimeSlot) -> int:
+    start = datetime.combine(date.min, slot.start_time)
+    end = datetime.combine(date.min, slot.end_time)
+    return int((end - start).total_seconds() / 60)
+
+
+def _travel_minutes(from_building, to_building) -> int:
+    if from_building.id == to_building.id:
+        return 0
+
+    dist = BuildingDistance.objects.filter(
+        from_building=from_building,
+        to_building=to_building
+    ).first()
+
+    if not dist:
+        dist = BuildingDistance.objects.filter(
+            from_building=to_building,
+            to_building=from_building
+        ).first()
+
+    if not dist:
+        raise ValidationError(
+            {'room': f'Не задано расстояние между корпусами "{from_building.name}" и "{to_building.name}".'}
+        )
+
+    return dist.minutes
+
+
+def _parity_matches(existing_parity: str, new_parity: str) -> bool:
+    return existing_parity == 'both' or new_parity == 'both' or existing_parity == new_parity
+
+
+def _sequence_is_valid(entries, candidate) -> bool:
+    """
+    Проверяет:
+    - нет ли перерыва больше 90 минут;
+    - хватает ли времени на переход между корпусами.
+    """
+    ordered = list(entries) + [candidate]
+    ordered.sort(key=lambda x: x.time_slot.start_time)
+
+    for prev, curr in zip(ordered, ordered[1:]):
+        gap = int((
+            datetime.combine(date.min, curr.time_slot.start_time) -
+            datetime.combine(date.min, prev.time_slot.end_time)
+        ).total_seconds() / 60)
+
+        if gap > 90:
+            return False
+
+        if prev.room and curr.room and prev.room_id != curr.room_id:
+            travel = _travel_minutes(prev.room.building, curr.room.building)
+            if travel > gap:
+                return False
+
+    return True
 
 
 @transaction.atomic
@@ -29,18 +106,29 @@ def create_schedule_entry(
     teacher_assignment,
     time_slot,
     working_day,
+    semester=None,
     week_parity='both',
     room=None,
+    location_type='room',
     is_cancelled=False,
     replacement=None,
 ):
+    semester = semester or get_active_semester()
+    if semester is None:
+        raise ValidationError('Не создан ни один семестр.')
+
+    if location_type == 'online':
+        room = None
+
     entry = ScheduleEntry(
+        semester=semester,
         student_group=student_group,
         teacher_assignment=teacher_assignment,
         time_slot=time_slot,
         working_day=working_day,
         week_parity=week_parity,
         room=room,
+        location_type=location_type,
         is_cancelled=is_cancelled,
         replacement=replacement,
     )
@@ -57,22 +145,31 @@ def cancel_schedule_entry(entry_id):
 
 
 @transaction.atomic
-def copy_schedule_for_day(source_day, target_day, week_parity=None):
+def copy_schedule_for_day(source_day, target_day, semester=None, week_parity=None):
     """
     Копирует занятия с одного дня на другой.
-    Используется для переноса/дублирования расписания.
     """
-    qs = ScheduleEntry.objects.filter(working_day=source_day, is_cancelled=False)
+    semester = semester or get_active_semester()
+    if semester is None:
+        raise ValidationError('Не создан ни один семестр.')
+
+    qs = ScheduleEntry.objects.filter(
+        semester=semester,
+        working_day=source_day,
+        is_cancelled=False
+    )
 
     if week_parity:
         qs = qs.filter(week_parity=week_parity)
 
     copied = []
-    for item in qs:
+    for item in qs.select_related('teacher_assignment', 'time_slot', 'room'):
         new_item = ScheduleEntry(
+            semester=semester,
             student_group=item.student_group,
             teacher_assignment=item.teacher_assignment,
             room=item.room,
+            location_type=item.location_type,
             time_slot=item.time_slot,
             working_day=target_day,
             week_parity=item.week_parity,
@@ -86,16 +183,21 @@ def copy_schedule_for_day(source_day, target_day, week_parity=None):
     return copied
 
 
-def get_group_schedule(student_group):
+def get_group_schedule(student_group, semester=None):
+    semester = semester or get_active_semester()
+    qs = ScheduleEntry.objects.filter(
+        semester=semester,
+        student_group=student_group,
+        is_cancelled=False
+    )
+
     return (
-        ScheduleEntry.objects
-        .filter(student_group=student_group, is_cancelled=False)
-        .select_related(
+        qs.select_related(
             'student_group',
             'teacher_assignment__teacher',
             'teacher_assignment__discipline',
             'teacher_assignment__lesson_type',
-            'room',
+            'room__building',
             'time_slot',
             'working_day',
         )
@@ -103,16 +205,21 @@ def get_group_schedule(student_group):
     )
 
 
-def get_teacher_schedule(teacher):
+def get_teacher_schedule(teacher, semester=None):
+    semester = semester or get_active_semester()
+    qs = ScheduleEntry.objects.filter(
+        semester=semester,
+        teacher_assignment__teacher=teacher,
+        is_cancelled=False
+    )
+
     return (
-        ScheduleEntry.objects
-        .filter(teacher_assignment__teacher=teacher, is_cancelled=False)
-        .select_related(
+        qs.select_related(
             'student_group',
             'teacher_assignment__teacher',
             'teacher_assignment__discipline',
             'teacher_assignment__lesson_type',
-            'room',
+            'room__building',
             'time_slot',
             'working_day',
         )
@@ -120,13 +227,19 @@ def get_teacher_schedule(teacher):
     )
 
 
-def get_room_load(room):
+def get_room_load(room, semester=None):
+    semester = semester or get_active_semester()
+    qs = ScheduleEntry.objects.filter(
+        semester=semester,
+        room=room,
+        is_cancelled=False
+    )
+
     return (
-        ScheduleEntry.objects
-        .filter(room=room, is_cancelled=False)
-        .select_related('time_slot', 'working_day', 'student_group')
+        qs.select_related('time_slot', 'working_day', 'student_group', 'teacher_assignment__discipline')
         .order_by('working_day__date', 'time_slot__pair_number')
     )
+
 
 def get_main_student_group(academic_group):
     """
@@ -151,9 +264,6 @@ def get_main_student_group(academic_group):
 
 
 def get_lesson_type_for_part(part: str) -> LessonType:
-    """
-    part: lecture | practice | lab
-    """
     aliases = {
         'lecture': ['лекция'],
         'practice': ['практика', 'семинар'],
@@ -172,6 +282,8 @@ def get_lesson_type_for_part(part: str) -> LessonType:
 def get_room_for_part(part: str, students_count: int):
     """
     Подбирает аудиторию под тип занятия и вместимость.
+    Если аудитория не найдена, для лекции/практики можно уйти в online.
+    Лабораторные без аудитории не ставим.
     """
     room_types = {
         'lecture': ['lecture', 'hall'],
@@ -180,49 +292,66 @@ def get_room_for_part(part: str, students_count: int):
     }
 
     allowed_types = room_types.get(part, [])
-    room = (
+    return (
         Room.objects
         .filter(room_type__in=allowed_types, capacity__gte=students_count)
         .order_by('capacity')
         .first()
     )
-    return room
 
-MAX_PAIRS_PER_DAY = 5
 
 def slot_is_free(
+    semester,
     working_day,
     time_slot,
     week_parity,
     student_group,
     teacher_assignment,
-    room=None
+    room=None,
+    location_type='room',
 ):
+    """
+    Проверяет, можно ли поставить занятие в данный слот.
+    Учитывает:
+    - пересечения,
+    - максимум 5 пар в день,
+    - переходы между корпусами,
+    - перерывы не более 1,5 часа.
+    """
+    semester = semester or get_active_semester()
+    if semester is None:
+        return False
+
     base_qs = ScheduleEntry.objects.filter(
+        semester=semester,
         working_day=working_day,
         is_cancelled=False,
-    ).select_related('teacher_assignment__teacher')
+    ).select_related(
+        'teacher_assignment__teacher',
+        'room__building',
+        'time_slot',
+    )
 
     teacher = teacher_assignment.teacher
 
     if week_parity != 'both':
-        parity_qs = base_qs.filter(
-            Q(week_parity='both') | Q(week_parity=week_parity)
-        )
+        parity_qs = base_qs.filter(Q(week_parity='both') | Q(week_parity=week_parity))
     else:
         parity_qs = base_qs
 
-    group_count = parity_qs.filter(student_group=student_group).count()
-    teacher_count = parity_qs.filter(teacher_assignment__teacher=teacher).count()
-
+    # Прямые пересечения
     if parity_qs.filter(time_slot=time_slot, student_group=student_group).exists():
         return False
 
     if parity_qs.filter(time_slot=time_slot, teacher_assignment__teacher=teacher).exists():
         return False
 
-    if room and parity_qs.filter(time_slot=time_slot, room=room).exists():
+    if room and location_type == 'room' and parity_qs.filter(time_slot=time_slot, room=room).exists():
         return False
+
+    # Лимит 5 пар в день
+    group_count = parity_qs.filter(student_group=student_group).count()
+    teacher_count = parity_qs.filter(teacher_assignment__teacher=teacher).count()
 
     if group_count >= MAX_PAIRS_PER_DAY:
         return False
@@ -230,39 +359,93 @@ def slot_is_free(
     if teacher_count >= MAX_PAIRS_PER_DAY:
         return False
 
+    # Проверка разрывов и переходов для группы
+    group_entries = list(
+        parity_qs.filter(student_group=student_group)
+        .exclude(time_slot=time_slot)
+        .select_related('room__building', 'time_slot')
+    )
+    candidate_group = ScheduleEntry(
+        semester=semester,
+        student_group=student_group,
+        teacher_assignment=teacher_assignment,
+        room=room,
+        location_type=location_type,
+        time_slot=time_slot,
+        working_day=working_day,
+        week_parity=week_parity,
+    )
+    if not _sequence_is_valid(group_entries, candidate_group):
+        return False
+
+    # Проверка разрывов и переходов для преподавателя
+    teacher_entries = list(
+        parity_qs.filter(teacher_assignment__teacher=teacher)
+        .exclude(time_slot=time_slot)
+        .select_related('room__building', 'time_slot')
+    )
+    candidate_teacher = ScheduleEntry(
+        semester=semester,
+        student_group=student_group,
+        teacher_assignment=teacher_assignment,
+        room=room,
+        location_type=location_type,
+        time_slot=time_slot,
+        working_day=working_day,
+        week_parity=week_parity,
+    )
+    if not _sequence_is_valid(teacher_entries, candidate_teacher):
+        return False
+
     return True
 
-def find_free_slot(student_group, teacher_assignment, room=None, week_parity='both'):
+
+def find_free_slot(semester=None, student_group=None, teacher_assignment=None, room=None, week_parity='both', location_type='room'):
     """
     Ищет первый свободный слот.
-    Перебирает все рабочие дни и все пары из справочника.
+    Перебирает все рабочие дни семестра и все пары из справочника.
     """
-    days = WorkingDay.objects.filter(is_working=True).order_by('date')
+    semester = semester or get_active_semester()
+    if semester is None:
+        return None, None
+
+    days = WorkingDay.objects.filter(
+        semester=semester,
+        is_working=True
+    ).order_by('date')
 
     if week_parity != 'both':
         days = days.filter(Q(week_parity='both') | Q(week_parity=week_parity))
 
-    time_slots = TimeSlot.objects.filter(pair_number__lte=5).order_by('pair_number')
+    # По ТЗ справочник пар — 1..8
+    time_slots = TimeSlot.objects.all().order_by('pair_number')
 
     for day in days:
         for slot in time_slots:
             if slot_is_free(
-                    working_day=day,
-                    time_slot=slot,
-                    week_parity=week_parity,
-                    student_group=student_group,
-                    teacher_assignment=teacher_assignment,
-                    room=room,
+                semester=semester,
+                working_day=day,
+                time_slot=slot,
+                week_parity=week_parity,
+                student_group=student_group,
+                teacher_assignment=teacher_assignment,
+                room=room,
+                location_type=location_type,
             ):
                 return day, slot
 
     return None, None
 
-def add_attestation_sessions(curriculum, student_group, week_parity='both'):
+
+def add_attestation_sessions(curriculum, student_group, semester=None, week_parity='both'):
     """
     Добавляет консультацию и итоговую аттестацию
     (зачёт или экзамен) по дисциплине.
     """
+    semester = semester or get_active_semester()
+    if semester is None:
+        raise ValidationError('Не создан ни один семестр.')
+
     created = []
 
     consultation_type = LessonType.objects.filter(name__icontains='консульта').first()
@@ -279,15 +462,20 @@ def add_attestation_sessions(curriculum, student_group, week_parity='both'):
 
         if consultation_assignment:
             consultation_room = get_room_for_part('lecture', student_group.student_count)
+            location_type = 'room' if consultation_room else 'online'
+
             day, slot = find_free_slot(
+                semester=semester,
                 student_group=student_group,
                 teacher_assignment=consultation_assignment,
                 room=consultation_room,
                 week_parity=week_parity,
+                location_type=location_type,
             )
 
             if day and slot:
                 exists = ScheduleEntry.objects.filter(
+                    semester=semester,
                     student_group=student_group,
                     teacher_assignment__discipline=curriculum.discipline,
                     teacher_assignment__lesson_type=consultation_type,
@@ -296,9 +484,11 @@ def add_attestation_sessions(curriculum, student_group, week_parity='both'):
 
                 if not exists:
                     entry = ScheduleEntry(
+                        semester=semester,
                         student_group=student_group,
                         teacher_assignment=consultation_assignment,
                         room=consultation_room,
+                        location_type=location_type,
                         time_slot=slot,
                         working_day=day,
                         week_parity=week_parity,
@@ -329,15 +519,20 @@ def add_attestation_sessions(curriculum, student_group, week_parity='both'):
 
             if final_assignment:
                 final_room = get_room_for_part('lecture', student_group.student_count)
+                location_type = 'room' if final_room else 'online'
+
                 day, slot = find_free_slot(
+                    semester=semester,
                     student_group=student_group,
                     teacher_assignment=final_assignment,
                     room=final_room,
                     week_parity=week_parity,
+                    location_type=location_type,
                 )
 
                 if day and slot:
                     exists = ScheduleEntry.objects.filter(
+                        semester=semester,
                         student_group=student_group,
                         teacher_assignment__discipline=curriculum.discipline,
                         teacher_assignment__lesson_type=final_type,
@@ -346,9 +541,11 @@ def add_attestation_sessions(curriculum, student_group, week_parity='both'):
 
                     if not exists:
                         entry = ScheduleEntry(
+                            semester=semester,
                             student_group=student_group,
                             teacher_assignment=final_assignment,
                             room=final_room,
+                            location_type=location_type,
                             time_slot=slot,
                             working_day=day,
                             week_parity=week_parity,
@@ -360,6 +557,7 @@ def add_attestation_sessions(curriculum, student_group, week_parity='both'):
 
     return created
 
+
 @transaction.atomic
 def generate_demo_schedule_from_curriculum(
     academic_group: AcademicGroup,
@@ -367,13 +565,20 @@ def generate_demo_schedule_from_curriculum(
     year: int | None = None,
     week_parity: str = 'both',
     clear_existing: bool = False,
+    schedule_semester=None,
 ):
     """
     Генератор расписания по учебному плану.
-    Заполняет семестр автоматически.
+    semester — номер семестра в учебном плане (поле Curriculum.semester).
+    schedule_semester — объект Semester, в который реально ставим занятия.
     """
+    schedule_semester = schedule_semester or get_active_semester()
+    if schedule_semester is None:
+        raise ValidationError('Не создан ни один семестр.')
+
     if clear_existing:
         ScheduleEntry.objects.filter(
+            semester=schedule_semester,
             student_group__academic_group=academic_group
         ).delete()
 
@@ -400,9 +605,9 @@ def generate_demo_schedule_from_curriculum(
     curricula_list = list(curricula)
     curricula_list.sort(
         key=lambda c: (
-                (c.lab_hours or 0) * 3 +
-                (c.practice_hours or 0) * 2 +
-                (c.lecture_hours or 0)
+            (c.lab_hours or 0) * 3 +
+            (c.practice_hours or 0) * 2 +
+            (c.lecture_hours or 0)
         ),
         reverse=True
     )
@@ -417,7 +622,6 @@ def generate_demo_schedule_from_curriculum(
 
         for part, hours in parts:
             lesson_count = ceil(hours / 2)
-
             lesson_type = get_lesson_type_for_part(part)
 
             assignment = (
@@ -438,17 +642,20 @@ def generate_demo_schedule_from_curriculum(
                 continue
 
             room = get_room_for_part(part, student_group.student_count)
-
             if part == 'lab' and room is None:
                 logger.warning(f"No room for lab {curriculum.discipline.name}")
                 continue
 
+            location_type = 'room' if room else 'online'
+
             for _ in range(lesson_count):
                 working_day, time_slot = find_free_slot(
+                    semester=schedule_semester,
                     student_group=student_group,
                     teacher_assignment=assignment,
                     room=room,
                     week_parity=week_parity,
+                    location_type=location_type,
                 )
 
                 if not working_day or not time_slot:
@@ -458,9 +665,11 @@ def generate_demo_schedule_from_curriculum(
                     break
 
                 entry = ScheduleEntry(
+                    semester=schedule_semester,
                     student_group=student_group,
                     teacher_assignment=assignment,
                     room=room,
+                    location_type=location_type,
                     time_slot=time_slot,
                     working_day=working_day,
                     week_parity=week_parity,
@@ -482,23 +691,33 @@ def generate_demo_schedule_from_curriculum(
             add_attestation_sessions(
                 curriculum=curriculum,
                 student_group=student_group,
+                semester=schedule_semester,
                 week_parity=week_parity,
             )
         )
 
     return created_entries
 
+
 @transaction.atomic
-def move_schedule_entry(entry, new_day, new_slot, new_room=None):
+def move_schedule_entry(entry, new_day, new_slot, new_room=None, new_location_type=None, semester=None):
     """
     Перенос занятия.
     Сначала создаём новое занятие, потом отменяем старое.
-    Так безопаснее: если валидация не пройдёт, старое занятие не сломается.
     """
+    semester = semester or entry.semester or get_active_semester()
+    if semester is None:
+        raise ValidationError('Не создан ни один семестр.')
+
+    location_type = new_location_type or entry.location_type
+    room = None if location_type == 'online' else (new_room or entry.room)
+
     new_entry = ScheduleEntry(
+        semester=semester,
         student_group=entry.student_group,
         teacher_assignment=entry.teacher_assignment,
-        room=new_room or entry.room,
+        room=room,
+        location_type=location_type,
         time_slot=new_slot,
         working_day=new_day,
         week_parity=entry.week_parity,
@@ -513,16 +732,21 @@ def move_schedule_entry(entry, new_day, new_slot, new_room=None):
 
     return new_entry
 
-def get_attestation_schedule(group_ids=None, kind='all'):
+
+def get_attestation_schedule(group_ids=None, kind='all', semester=None):
+    semester = semester or get_active_semester()
+    if semester is None:
+        return ScheduleEntry.objects.none()
+
     qs = (
         ScheduleEntry.objects
-        .filter(is_cancelled=False)
+        .filter(semester=semester, is_cancelled=False)
         .select_related(
             'student_group',
             'teacher_assignment__teacher',
             'teacher_assignment__discipline',
             'teacher_assignment__lesson_type',
-            'room',
+            'room__building',
             'time_slot',
             'working_day',
         )
@@ -540,12 +764,21 @@ def get_attestation_schedule(group_ids=None, kind='all'):
 
     return qs.order_by('working_day__date', 'time_slot__pair_number')
 
+
 @transaction.atomic
-def create_consultation(student_group, teacher_assignment, room, day, slot):
+def create_consultation(student_group, teacher_assignment, room, day, slot, semester=None):
+    semester = semester or get_active_semester()
+    if semester is None:
+        raise ValidationError('Не создан ни один семестр.')
+
+    location_type = 'room' if room else 'online'
+
     entry = ScheduleEntry(
+        semester=semester,
         student_group=student_group,
         teacher_assignment=teacher_assignment,
         room=room,
+        location_type=location_type,
         working_day=day,
         time_slot=slot,
         week_parity='both',
@@ -555,7 +788,12 @@ def create_consultation(student_group, teacher_assignment, room, day, slot):
     entry.save()
     return entry
 
-def get_department_teacher_plan(department):
+
+def get_department_teacher_plan(department, semester=None):
+    semester = semester or get_active_semester()
+    if semester is None:
+        return Teacher.objects.none(), defaultdict(list)
+
     teachers = (
         Teacher.objects
         .filter(department=department)
@@ -565,13 +803,17 @@ def get_department_teacher_plan(department):
 
     entries = (
         ScheduleEntry.objects
-        .filter(teacher_assignment__teacher__department=department, is_cancelled=False)
+        .filter(
+            semester=semester,
+            teacher_assignment__teacher__department=department,
+            is_cancelled=False
+        )
         .select_related(
             'student_group',
             'teacher_assignment__teacher',
             'teacher_assignment__discipline',
             'teacher_assignment__lesson_type',
-            'room',
+            'room__building',
             'time_slot',
             'working_day',
         )
@@ -585,26 +827,36 @@ def get_department_teacher_plan(department):
     return teachers, grouped
 
 
-def get_multi_group_chessboard(groups, start_date=None, end_date=None):
+def get_multi_group_chessboard(groups, start_date=None, end_date=None, semester=None):
+    semester = semester or get_active_semester()
+    if semester is None:
+        return [], []
+
     groups = list(groups.select_related('academic_group').order_by('name'))
 
     entries = (
         ScheduleEntry.objects
-        .filter(student_group__in=groups, is_cancelled=False)
+        .filter(
+            semester=semester,
+            student_group__in=groups,
+            is_cancelled=False
+        )
         .select_related(
             'student_group',
             'teacher_assignment__teacher',
             'teacher_assignment__discipline',
             'teacher_assignment__lesson_type',
-            'room',
+            'room__building',
             'time_slot',
             'working_day',
         )
     )
 
-    # Фильтр по диапазону дат (для одной недели)
     if start_date and end_date:
-        entries = entries.filter(working_day__date__gte=start_date, working_day__date__lte=end_date)
+        entries = entries.filter(
+            working_day__date__gte=start_date,
+            working_day__date__lte=end_date
+        )
 
     entries = entries.order_by('working_day__date', 'time_slot__pair_number')
 
@@ -612,15 +864,15 @@ def get_multi_group_chessboard(groups, start_date=None, end_date=None):
     for entry in entries:
         entry_map[(entry.working_day_id, entry.time_slot_id)].append(entry)
 
-    days = (
-        WorkingDay.objects
-        .filter(is_working=True)
+    days = WorkingDay.objects.filter(
+        semester=semester,
+        is_working=True
     )
     if start_date and end_date:
         days = days.filter(date__gte=start_date, date__lte=end_date)
     days = days.order_by('date')
 
-    slots = TimeSlot.objects.filter(pair_number__lte=5).order_by('pair_number')
+    slots = TimeSlot.objects.order_by('pair_number')
 
     board = []
     for day in days:
@@ -642,10 +894,15 @@ def get_multi_group_chessboard(groups, start_date=None, end_date=None):
 
     return groups, board
 
-def get_room_summary():
+
+def get_room_summary(semester=None):
+    semester = semester or get_active_semester()
+    if semester is None:
+        return [], [], []
+
     qs = (
         ScheduleEntry.objects
-        .filter(room__isnull=False, is_cancelled=False)
+        .filter(semester=semester, room__isnull=False, is_cancelled=False)
         .select_related('room', 'room__building', 'time_slot')
     )
 
@@ -669,35 +926,15 @@ def get_room_summary():
 
     return by_room_type, by_building, by_time
 
-def get_department_teacher_plan_rows(department):
-    teachers = (
-        Teacher.objects
-        .filter(department=department)
-        .select_related('department')
-        .order_by('full_name')
-    )
 
-    entries = (
-        ScheduleEntry.objects
-        .filter(teacher_assignment__teacher__department=department, is_cancelled=False)
-        .select_related(
-            'student_group',
-            'teacher_assignment__teacher',
-            'teacher_assignment__discipline',
-            'teacher_assignment__lesson_type',
-            'room',
-            'time_slot',
-            'working_day',
-        )
-        .order_by('teacher_assignment__teacher__full_name', 'working_day__date', 'time_slot__pair_number')
-    )
+def get_department_teacher_plan_rows(department, semester=None):
+    teachers, grouped = get_department_teacher_plan(department, semester=semester)
 
     result = []
     for teacher in teachers:
-        teacher_entries = [e for e in entries if e.teacher_assignment.teacher_id == teacher.id]
         result.append({
             'teacher': teacher,
-            'entries': teacher_entries,
+            'entries': grouped.get(teacher.id, []),
         })
 
     return result

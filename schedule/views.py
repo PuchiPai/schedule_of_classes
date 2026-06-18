@@ -6,11 +6,11 @@ from django.contrib import messages
 from django.shortcuts import redirect
 
 from collections import defaultdict
-from .models import StudentGroup, TimeSlot, ScheduleEntry
+from .models import StudentGroup, TimeSlot, Semester, ScheduleEntry, TeacherAssignment
+from .services import get_active_semester
 
 
 def copy_schedule_view(request):
-    """Страница копирования расписания"""
     if request.method == 'POST':
         source_group_id = request.POST.get('source_group')
         target_group_id = request.POST.get('target_group')
@@ -24,11 +24,10 @@ def copy_schedule_view(request):
         source_group = get_object_or_404(StudentGroup, pk=source_group_id)
         target_group = get_object_or_404(StudentGroup, pk=target_group_id)
 
-        # Получаем занятия исходной группы
         entries = ScheduleEntry.objects.filter(
             student_group=source_group,
             is_cancelled=False,
-        ).select_related('teacher_assignment', 'time_slot', 'working_day', 'room')
+        ).select_related('teacher_assignment', 'time_slot', 'working_day', 'room', 'semester')
 
         if source_week_start and source_week_end:
             entries = entries.filter(
@@ -38,7 +37,6 @@ def copy_schedule_view(request):
 
         copied_count = 0
         for entry in entries:
-            # Ищем свободный слот для целевой группы
             working_day, time_slot = find_free_slot(
                 student_group=target_group,
                 teacher_assignment=entry.teacher_assignment,
@@ -48,24 +46,22 @@ def copy_schedule_view(request):
 
             if working_day and time_slot:
                 ScheduleEntry.objects.create(
+                    semester=entry.semester,
                     student_group=target_group,
                     teacher_assignment=entry.teacher_assignment,
                     room=entry.room,
                     time_slot=time_slot,
                     working_day=working_day,
                     week_parity=entry.week_parity,
+                    location_type=entry.location_type,
                 )
                 copied_count += 1
 
         messages.success(request, f'Скопировано {copied_count} занятий для группы {target_group.name}')
         return redirect('schedule:group_schedule', group_id=target_group_id)
 
-    # GET-запрос: показываем форму
     all_groups = StudentGroup.objects.select_related('academic_group').all().order_by('name')
-
-    return render(request, 'schedule/copy_schedule.html', {
-        'all_groups': all_groups,
-    })
+    return render(request, 'schedule/copy_schedule.html', {'all_groups': all_groups})
 
 from .models import StudentGroup, Department, Room, Teacher
 from .services import (
@@ -78,33 +74,34 @@ from .services import (
     get_room_summary,
     find_free_slot,
 )
-from .models import ScheduleEntry, TimeSlot, TeacherAssignment
+
+def get_active_semester():
+    today = date.today()
+    semester = Semester.objects.filter(start_date__lte=today).order_by('-start_date').first()
+    if semester:
+        return semester
+    return Semester.objects.order_by('-start_date').first()
 
 
-def get_week_dates(week_number=None):
+def get_week_dates(semester=None, week_number=None):
     """
     Возвращает даты начала и конца недели.
     Если week_number не указан, возвращает текущую неделю семестра.
     """
-    semester_start = date(2026, 9, 1)
-    semester_weeks = 18
+    semester = semester or get_active_semester()
+    if semester is None:
+        raise ValueError('Не создан ни один семестр.')
+
     today = date.today()
 
     if week_number is None or week_number == 0:
-        # Если дата до начала семестра, показываем конец семестра
-        if today < semester_start:
-            week_number = semester_weeks
-        else:
-            days_since_start = (today - semester_start).days
-            week_number = days_since_start // 7 + 1
-            if week_number > semester_weeks:
-                week_number = semester_weeks
+        days_since_start = (today - semester.start_date).days
+        week_number = max(1, min(semester.weeks, days_since_start // 7 + 1))
 
-    week_start = semester_start + timedelta(weeks=week_number - 1)
+    week_start = semester.start_date + timedelta(weeks=week_number - 1)
     week_end = week_start + timedelta(days=5)  # Пн-Сб
 
-    return week_number, week_start, week_end, semester_weeks
-
+    return week_number, week_start, week_end, semester.weeks
 
 def home_view(request):
     groups = StudentGroup.objects.select_related('academic_group').all().order_by('name')
@@ -206,12 +203,11 @@ def multi_group_chessboard_view(request):
     selected_groups = all_groups.filter(id__in=selected_ids) if selected_ids else all_groups.none()
     groups, board = [], []
 
-    # Получаем номер недели из запроса
     week_param = request.GET.get('week', '0')
     current_week = int(week_param) if week_param.isdigit() else 0
 
-    # Вычисляем даты
-    current_week, week_start, week_end, semester_weeks = get_week_dates(current_week)
+    semester = get_active_semester()
+    current_week, week_start, week_end, semester_weeks = get_week_dates(semester, current_week)
 
     if selected_ids:
         groups, board = get_multi_group_chessboard(selected_groups, week_start, week_end)

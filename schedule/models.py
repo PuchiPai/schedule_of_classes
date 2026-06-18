@@ -2,7 +2,8 @@ from django.db import models, transaction
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.core.exceptions import ValidationError
 from django.db.models import Q
-from datetime import datetime
+from datetime import datetime, date
+
 
 def slots_overlap(slot_a, slot_b):
     """
@@ -22,11 +23,38 @@ class Department(models.Model):
     ]
     name = models.CharField(max_length=255, verbose_name="Название подразделения")
     dept_type = models.CharField(max_length=20, choices=DEPT_TYPES, verbose_name="Тип подразделения")
-    parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children', verbose_name="Вышестоящее подразделение")
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='children',
+        verbose_name="Вышестоящее подразделение"
+    )
 
     class Meta:
         verbose_name = "Подразделение"
         verbose_name_plural = "Подразделения"
+
+    def clean(self):
+        hierarchy = {
+            'school': 'university',
+            'department': 'school',
+            'chair': 'department',
+        }
+
+        if self.dept_type == 'university':
+            if self.parent is not None:
+                raise ValidationError({'parent': 'У университета не должно быть вышестоящего подразделения.'})
+        else:
+            if not self.parent:
+                raise ValidationError({'parent': 'Для этого типа подразделения нужно указать вышестоящее подразделение.'})
+
+            expected = hierarchy.get(self.dept_type)
+            if expected and self.parent.dept_type != expected:
+                raise ValidationError({
+                    'parent': f'Для типа "{self.get_dept_type_display()}" вышестоящее подразделение должно быть "{expected}".'
+                })
 
     def __str__(self):
         return self.name
@@ -72,8 +100,14 @@ class StudentGroup(models.Model):
     ]
     name = models.CharField(max_length=50, unique=True, verbose_name="Название учебной группы")
     group_type = models.CharField(max_length=20, choices=GROUP_TYPES, verbose_name="Тип группы")
-    academic_group = models.ForeignKey(AcademicGroup, on_delete=models.CASCADE, null=True, blank=True,
-                                       verbose_name="Академическая группа")
+    academic_group = models.ForeignKey(
+        AcademicGroup,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='primary_student_groups',
+        verbose_name="Основная академическая группа"
+    )
     student_count = models.PositiveIntegerField(verbose_name="Количество обучающихся")
 
     class Meta:
@@ -82,6 +116,33 @@ class StudentGroup(models.Model):
 
     def __str__(self):
         return self.name
+
+class StudentGroupAcademicGroup(models.Model):
+    student_group = models.ForeignKey(
+        StudentGroup,
+        on_delete=models.CASCADE,
+        related_name='academic_bindings',
+        verbose_name="Учебная группа"
+    )
+    academic_group = models.ForeignKey(
+        AcademicGroup,
+        on_delete=models.PROTECT,
+        related_name='group_bindings',
+        verbose_name="Академическая группа"
+    )
+
+    class Meta:
+        verbose_name = "Связь учебной группы и академической группы"
+        verbose_name_plural = "Связи учебных групп и академических групп"
+        constraints = [
+            models.UniqueConstraint(
+                fields=['student_group', 'academic_group'],
+                name='unique_student_group_academic_group'
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.student_group.name} → {self.academic_group.name}"
 
 
 # 5. Корпус
@@ -99,10 +160,8 @@ class Building(models.Model):
 
 # 5.1. Расстояния между корпусами (НОВАЯ МОДЕЛЬ)
 class BuildingDistance(models.Model):
-    from_building = models.ForeignKey(Building, on_delete=models.CASCADE, related_name='distances_from',
-                                      verbose_name="От корпуса")
-    to_building = models.ForeignKey(Building, on_delete=models.CASCADE, related_name='distances_to',
-                                    verbose_name="До корпуса")
+    from_building = models.ForeignKey(Building, on_delete=models.CASCADE, related_name='distances_from', verbose_name="От корпуса")
+    to_building = models.ForeignKey(Building, on_delete=models.CASCADE, related_name='distances_to', verbose_name="До корпуса")
     minutes = models.PositiveIntegerField(verbose_name="Время в пути (мин)")
 
     class Meta:
@@ -111,6 +170,18 @@ class BuildingDistance(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['from_building', 'to_building'], name='unique_building_pair')
         ]
+
+    def clean(self):
+        if self.from_building_id == self.to_building_id:
+            raise ValidationError({'to_building': 'Корпус не может быть указан сам с собой.'})
+
+        reverse_exists = BuildingDistance.objects.filter(
+            from_building=self.to_building,
+            to_building=self.from_building
+        ).exclude(pk=self.pk).exists()
+
+        if reverse_exists:
+            raise ValidationError('Расстояние между этими корпусами уже задано в обратном направлении.')
 
     def __str__(self):
         return f"{self.from_building.name} ↔ {self.to_building.name}: {self.minutes} мин."
@@ -171,44 +242,38 @@ class Curriculum(models.Model):
         ('none', 'Без отчетности'),
     ]
 
-    academic_group = models.ForeignKey(
-        AcademicGroup,
-        on_delete=models.PROTECT,
-        verbose_name="Академическая группа"
+    academic_group = models.ForeignKey(AcademicGroup, on_delete=models.PROTECT, verbose_name="Академическая группа")
+    discipline = models.ForeignKey(Discipline, on_delete=models.PROTECT, verbose_name="Дисциплина")
+    semester = models.PositiveSmallIntegerField(
+        verbose_name="Семестр",
+        validators=[MinValueValidator(1), MaxValueValidator(8)]
     )
-    discipline = models.ForeignKey(
-        Discipline,
-        on_delete=models.PROTECT,
-        verbose_name="Дисциплина"
+    year = models.PositiveSmallIntegerField(
+        verbose_name="Курс",
+        validators=[MinValueValidator(1), MaxValueValidator(4)]
     )
-    semester = models.IntegerField(verbose_name="Семестр")
-    year = models.IntegerField(verbose_name="Курс")
-
     weeks = models.PositiveSmallIntegerField(
         default=18,
         validators=[MinValueValidator(18)],
         verbose_name="Количество недель"
     )
-
     lecture_hours = models.PositiveIntegerField(default=0, verbose_name="Лекционные часы")
     practice_hours = models.PositiveIntegerField(default=0, verbose_name="Практические часы")
     lab_hours = models.PositiveIntegerField(default=0, verbose_name="Лабораторные часы")
-
-    exam_type = models.CharField(
-        max_length=10,
-        choices=EXAM_TYPES,
-        null=True,
-        blank=True,
-        verbose_name="Вид отчетности"
-    )
+    exam_type = models.CharField(max_length=10, choices=EXAM_TYPES, null=True, blank=True, verbose_name="Вид отчетности")
 
     class Meta:
         verbose_name = "Учебный план"
         verbose_name_plural = "Учебные планы"
-        unique_together = ('academic_group', 'discipline', 'semester')
+        constraints = [
+            models.UniqueConstraint(
+                fields=['academic_group', 'discipline', 'year', 'semester'],
+                name='unique_curriculum_item'
+            )
+        ]
 
     def __str__(self):
-        return f"{self.discipline.name} - {self.academic_group.name} ({self.semester} семестр)"
+        return f"{self.discipline.name} - {self.academic_group.name} ({self.year} курс, {self.semester} семестр)"
 
     @property
     def total_hours(self):
@@ -216,15 +281,11 @@ class Curriculum(models.Model):
 
     @property
     def hours_per_week(self):
-        if not self.weeks:
-            return 0
-        return round(self.total_hours / self.weeks, 2)
+        return round(self.total_hours / self.weeks, 2) if self.weeks else 0
 
     @property
     def pairs_per_week(self):
-        if not self.weeks:
-            return 0
-        return round((self.total_hours / 2) / self.weeks, 2)
+        return round((self.total_hours / 2) / self.weeks, 2) if self.weeks else 0
 
 
 # 10. Учебное поручение
@@ -285,10 +346,10 @@ class WorkingDay(models.Model):
         null=True,
         blank=True,
         related_name='working_days',
-        verbose_name='Семестр'
+        verbose_name="Семестр"
     )
-    date = models.DateField(unique=True, verbose_name="Дата")
-    weekday = models.IntegerField(choices=WEEKDAYS, verbose_name="День недели", default=1)
+    date = models.DateField(verbose_name="Дата")
+    weekday = models.IntegerField(choices=WEEKDAYS, verbose_name="День недели")
     is_working = models.BooleanField(default=True, verbose_name="Рабочий день")
     week_parity = models.CharField(
         max_length=10,
@@ -301,6 +362,18 @@ class WorkingDay(models.Model):
         ordering = ['date']
         verbose_name = "Учебный день"
         verbose_name_plural = "Учебные дни"
+        constraints = [
+            models.UniqueConstraint(fields=['semester', 'date'], name='unique_semester_date')
+        ]
+
+    def clean(self):
+        if Holiday.objects.filter(date=self.date).exists():
+            self.is_working = False
+
+    def save(self, *args, **kwargs):
+        self.weekday = self.date.isoweekday()
+        self.clean()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         status = "рабочий" if self.is_working else "выходной"
@@ -313,12 +386,30 @@ class ScheduleEntry(models.Model):
         ('odd', 'Нечётная неделя'),
         ('both', 'Обе недели'),
     ]
+    LOCATION_TYPES = [
+        ('room', 'Аудитория'),
+        ('online', 'Онлайн'),
+    ]
 
+    semester = models.ForeignKey(
+        'Semester',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='schedule_entries',
+        verbose_name="Семестр"
+    )
     student_group = models.ForeignKey(
         'StudentGroup', on_delete=models.CASCADE, related_name='schedule_entries'
     )
     teacher_assignment = models.ForeignKey(
         'TeacherAssignment', on_delete=models.CASCADE, related_name='schedule_entries'
+    )
+    location_type = models.CharField(
+        max_length=10,
+        choices=LOCATION_TYPES,
+        default='room',
+        verbose_name="Формат проведения"
     )
     room = models.ForeignKey(
         'Room', on_delete=models.PROTECT, null=True, blank=True, related_name='schedule_entries'
@@ -358,12 +449,40 @@ class ScheduleEntry(models.Model):
         errors = {}
 
         def parity_conflict(a, b):
-            if a == 'both' or b == 'both':
-                return True
-            return a == b
+            return a == 'both' or b == 'both' or a == b
+
+        def slot_minutes(slot):
+            start = datetime.combine(date.min, slot.start_time)
+            end = datetime.combine(date.min, slot.end_time)
+            return int((end - start).total_seconds() / 60)
+
+        def get_travel_minutes(from_building, to_building):
+            if from_building.id == to_building.id:
+                return 0
+            dist = BuildingDistance.objects.filter(
+                from_building=from_building,
+                to_building=to_building
+            ).first() or BuildingDistance.objects.filter(
+                from_building=to_building,
+                to_building=from_building
+            ).first()
+            if not dist:
+                raise ValidationError({
+                    'room': f'Не задано расстояние между корпусами "{from_building.name}" и "{to_building.name}".'
+                })
+            return dist.minutes
 
         if self.working_day and not self.working_day.is_working:
             errors['working_day'] = 'Нельзя ставить занятие в нерабочий день.'
+
+        if self.semester and self.working_day and self.working_day.semester_id != self.semester_id:
+            errors['working_day'] = 'Дата занятия должна принадлежать выбранному семестру.'
+
+        if self.location_type == 'room' and not self.room:
+            errors['room'] = 'Для очного занятия нужно указать аудиторию.'
+
+        if self.location_type == 'online':
+            self.room = None
 
         if self.room and self.student_group and self.room.capacity < self.student_group.student_count:
             errors['room'] = 'В аудитории недостаточно мест для этой группы.'
@@ -376,18 +495,19 @@ class ScheduleEntry(models.Model):
 
         if self.working_day and self.time_slot and self.student_group and self.teacher_assignment:
             same_day = ScheduleEntry.objects.filter(
+                semester=self.semester,
                 working_day=self.working_day,
                 is_cancelled=False,
             ).exclude(pk=self.pk).select_related(
                 'time_slot',
                 'teacher_assignment__teacher',
-                'room'
+                'room__building'
             )
 
+            # Конфликт по времени
             for entry in same_day:
                 if not parity_conflict(entry.week_parity, self.week_parity):
                     continue
-
                 if not slots_overlap(entry.time_slot, self.time_slot):
                     continue
 
@@ -402,6 +522,7 @@ class ScheduleEntry(models.Model):
 
             # Не больше 5 пар в день для группы
             group_count = ScheduleEntry.objects.filter(
+                semester=self.semester,
                 student_group=self.student_group,
                 working_day=self.working_day,
                 week_parity=self.week_parity,
@@ -412,6 +533,7 @@ class ScheduleEntry(models.Model):
 
             # Не больше 5 пар в день для преподавателя
             teacher_count = ScheduleEntry.objects.filter(
+                semester=self.semester,
                 teacher_assignment__teacher=self.teacher_assignment.teacher,
                 working_day=self.working_day,
                 week_parity=self.week_parity,
@@ -420,58 +542,53 @@ class ScheduleEntry(models.Model):
             if teacher_count >= 5:
                 errors['teacher_assignment'] = 'Преподаватель не может работать больше 5 пар в день.'
 
-            # Чётность недели
-            if self.working_day.week_parity not in ['both', self.week_parity] and self.week_parity != 'both':
-                errors['week_parity'] = 'Чётность недели занятия не совпадает с чётностью рабочего дня.'
+            # Не больше 8 астрономических часов в день
+            teacher_entries = list(ScheduleEntry.objects.filter(
+                semester=self.semester,
+                teacher_assignment__teacher=self.teacher_assignment.teacher,
+                working_day=self.working_day,
+                week_parity=self.week_parity,
+                is_cancelled=False
+            ).exclude(pk=self.pk).select_related('time_slot'))
 
-            # Переходы между корпусами
-            if self.room and self.working_day and self.time_slot:
-                def get_travel_minutes(from_building, to_building):
-                    if from_building.id == to_building.id:
-                        return 0
-                    dist = BuildingDistance.objects.filter(
-                        from_building=from_building,
-                        to_building=to_building
-                    ).first() or BuildingDistance.objects.filter(
-                        from_building=to_building,
-                        to_building=from_building
-                    ).first()
-                    if not dist:
-                        raise ValidationError(
-                            {'room': f'Не задано расстояние между корпусами "{from_building.name}" и "{to_building.name}".'}
-                        )
-                    return dist.minutes
+            teacher_total_minutes = sum(slot_minutes(e.time_slot) for e in teacher_entries) + slot_minutes(self.time_slot)
+            if teacher_total_minutes > 480:
+                errors['teacher_assignment'] = 'Преподаватель не может работать больше 8 астрономических часов в день.'
 
-                def gap_minutes(start_time, end_time):
-                    dt1 = datetime.combine(self.working_day.date, start_time)
-                    dt2 = datetime.combine(self.working_day.date, end_time)
-                    return int((dt1 - dt2).total_seconds() / 60)
+            # Перерывы между занятиями не более 1,5 часа
+            group_entries = list(ScheduleEntry.objects.filter(
+                semester=self.semester,
+                student_group=self.student_group,
+                working_day=self.working_day,
+                week_parity=self.week_parity,
+                is_cancelled=False
+            ).exclude(pk=self.pk).select_related('time_slot', 'room__building'))
 
-                affected = ScheduleEntry.objects.filter(
-                    working_day=self.working_day,
-                    week_parity=self.week_parity,
-                    is_cancelled=False
-                ).exclude(pk=self.pk).select_related('room__building', 'time_slot')
+            teacher_entries = list(ScheduleEntry.objects.filter(
+                semester=self.semester,
+                teacher_assignment__teacher=self.teacher_assignment.teacher,
+                working_day=self.working_day,
+                week_parity=self.week_parity,
+                is_cancelled=False
+            ).exclude(pk=self.pk).select_related('time_slot', 'room__building'))
 
-                for entry in affected:
-                    if not entry.room:
-                        continue
+            for entries in (group_entries, teacher_entries):
+                entries = entries + [self]
+                entries.sort(key=lambda x: x.time_slot.start_time)
 
-                    # предыдущее занятие
-                    if entry.time_slot.end_time <= self.time_slot.start_time:
-                        if entry.student_group_id == self.student_group_id or entry.teacher_assignment.teacher_id == self.teacher_assignment.teacher_id:
-                            gap = gap_minutes(self.time_slot.start_time, entry.time_slot.end_time)
-                            travel = get_travel_minutes(entry.room.building, self.room.building)
-                            if travel > gap:
-                                errors['room'] = 'Недостаточно времени на переход между корпусами.'
+                for prev, curr in zip(entries, entries[1:]):
+                    gap = int((
+                        datetime.combine(date.min, curr.time_slot.start_time) -
+                        datetime.combine(date.min, prev.time_slot.end_time)
+                    ).total_seconds() / 60)
 
-                    # следующее занятие
-                    if entry.time_slot.start_time >= self.time_slot.end_time:
-                        if entry.student_group_id == self.student_group_id or entry.teacher_assignment.teacher_id == self.teacher_assignment.teacher_id:
-                            gap = gap_minutes(entry.time_slot.start_time, self.time_slot.end_time)
-                            travel = get_travel_minutes(self.room.building, entry.room.building)
-                            if travel > gap:
-                                errors['room'] = 'Недостаточно времени на переход между корпусами.'
+                    if gap > 90:
+                        errors['time_slot'] = 'Между учебными занятиями не должно быть перерыва более 1,5 часа.'
+
+                    if prev.room and curr.room and prev.room_id != curr.room_id:
+                        travel = get_travel_minutes(prev.room.building, curr.room.building)
+                        if travel > gap:
+                            errors['room'] = 'Недостаточно времени на переход между корпусами.'
 
         if errors:
             raise ValidationError(errors)
@@ -482,9 +599,10 @@ class ScheduleEntry(models.Model):
             return super().save(*args, **kwargs)
 
     def __str__(self):
+        place = self.room.name if self.room else 'онлайн'
         return (
             f'{self.student_group.name} — {self.teacher_assignment.discipline.name} '
-            f'({self.working_day.date}, {self.time_slot.pair_number} пара)'
+            f'({self.working_day.date}, {self.time_slot.pair_number} пара, {place})'
         )
 
 
