@@ -7,6 +7,7 @@
 
 <!-- Навигационное меню -->
 <div class="nav-menu">
+    <a href="{% url 'schedule:copy_schedule' %}" class="nav-btn">Копировать расписание</a>
     <a href="{% url 'schedule:schedule_table' %}" class="nav-btn">Общее расписание</a>
     <a href="{% url 'schedule:teacher_assignment_report' %}" class="nav-btn">Учебные поручения</a>
     <a href="{% url 'schedule:teacher_workload' %}" class="nav-btn">Нагрузка преподавателей</a>

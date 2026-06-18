@@ -2,6 +2,68 @@ from django.shortcuts import render, get_object_or_404
 from django.db.models import Count
 from datetime import date, timedelta
 
+from django.contrib import messages
+from django.shortcuts import redirect
+
+
+def copy_schedule_view(request):
+    """Страница копирования расписания"""
+    if request.method == 'POST':
+        source_group_id = request.POST.get('source_group')
+        target_group_id = request.POST.get('target_group')
+        source_week_start = request.POST.get('source_week_start')
+        source_week_end = request.POST.get('source_week_end')
+
+        if not source_group_id or not target_group_id:
+            messages.error(request, 'Выберите группу-источник и группу-назначение')
+            return redirect('schedule:copy_schedule')
+
+        source_group = get_object_or_404(StudentGroup, pk=source_group_id)
+        target_group = get_object_or_404(StudentGroup, pk=target_group_id)
+
+        # Получаем занятия исходной группы
+        entries = ScheduleEntry.objects.filter(
+            student_group=source_group,
+            is_cancelled=False,
+        ).select_related('teacher_assignment', 'time_slot', 'working_day', 'room')
+
+        if source_week_start and source_week_end:
+            entries = entries.filter(
+                working_day__date__gte=source_week_start,
+                working_day__date__lte=source_week_end
+            )
+
+        copied_count = 0
+        for entry in entries:
+            # Ищем свободный слот для целевой группы
+            working_day, time_slot = find_free_slot(
+                student_group=target_group,
+                teacher_assignment=entry.teacher_assignment,
+                room=entry.room,
+                week_parity=entry.week_parity,
+            )
+
+            if working_day and time_slot:
+                ScheduleEntry.objects.create(
+                    student_group=target_group,
+                    teacher_assignment=entry.teacher_assignment,
+                    room=entry.room,
+                    time_slot=time_slot,
+                    working_day=working_day,
+                    week_parity=entry.week_parity,
+                )
+                copied_count += 1
+
+        messages.success(request, f'Скопировано {copied_count} занятий для группы {target_group.name}')
+        return redirect('schedule:group_schedule', group_id=target_group_id)
+
+    # GET-запрос: показываем форму
+    all_groups = StudentGroup.objects.select_related('academic_group').all().order_by('name')
+
+    return render(request, 'schedule/copy_schedule.html', {
+        'all_groups': all_groups,
+    })
+
 from .models import StudentGroup, Department, Room, Teacher
 from .services import (
     get_group_schedule,
@@ -11,6 +73,7 @@ from .services import (
     get_department_teacher_plan_rows,
     get_multi_group_chessboard,
     get_room_summary,
+    find_free_slot,
 )
 from .models import ScheduleEntry, TimeSlot, TeacherAssignment
 
