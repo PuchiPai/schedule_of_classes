@@ -1,8 +1,8 @@
 from django.db import models, transaction
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.core.exceptions import ValidationError
-from django.db.models import Q
-from datetime import datetime, date
+from django.db.models import Q, Sum
+from datetime import datetime, date, timedelta
 
 
 def slots_overlap(slot_a, slot_b):
@@ -290,23 +290,65 @@ class Curriculum(models.Model):
 
 # 10. Учебное поручение
 class TeacherAssignment(models.Model):
-    teacher = models.ForeignKey(Teacher, on_delete=models.PROTECT, verbose_name="Преподаватель")
-    discipline = models.ForeignKey(Discipline, on_delete=models.PROTECT, verbose_name="Дисциплина")
-    lesson_type = models.ForeignKey(LessonType, on_delete=models.PROTECT, verbose_name="Тип занятия")
-    hours_allocated = models.IntegerField(verbose_name="Выделено часов", default=0)
+    teacher = models.ForeignKey(
+        'Teacher',
+        on_delete=models.PROTECT,
+        verbose_name="Преподаватель"
+    )
+    curriculum = models.ForeignKey(
+        'Curriculum',
+        on_delete=models.PROTECT,
+        verbose_name="Учебный план (дисциплина, семестр, группа)",
+        null=True,
+        blank=True  # null=True – чтобы не ломать старые записи, если решите добавить позже
+    )
+    discipline = models.ForeignKey(
+        'Discipline',
+        on_delete=models.PROTECT,
+        verbose_name="Дисциплина"
+    )
+    lesson_type = models.ForeignKey(
+        'LessonType',
+        on_delete=models.PROTECT,
+        verbose_name="Тип занятия"
+    )
+    hours_allocated = models.IntegerField(
+        verbose_name="Выделено часов (на семестр)",
+        default=0
+    )
+
+    # Предпочтения преподавателя (необязательные)
+    preferred_days = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name="Предпочтительные дни недели (номера, 0=пн...5=сб)"
+    )
+    preferred_time_start = models.TimeField(
+        null=True,
+        blank=True,
+        verbose_name="Предпочтительное начало занятий"
+    )
+    preferred_time_end = models.TimeField(
+        null=True,
+        blank=True,
+        verbose_name="Предпочтительное окончание занятий"
+    )
 
     class Meta:
         verbose_name = "Учебное поручение"
         verbose_name_plural = "Учебные поручения"
         constraints = [
+            # Уникальность: один преподаватель – один предмет – один тип занятия – один учебный план
+            # Если curriculum не указан (null), то уникальность по трём полям
             models.UniqueConstraint(
-                fields=['teacher', 'discipline', 'lesson_type'],
-                name='unique_teacher_discipline_lesson_type'
+                fields=['teacher', 'discipline', 'lesson_type', 'curriculum'],
+                name='unique_teacher_discipline_lesson_curriculum'
             )
         ]
 
     def __str__(self):
-        return f"{self.teacher.full_name} - {self.discipline.name} ({self.lesson_type.name})"
+        curriculum_info = f" ({self.curriculum})" if self.curriculum else ""
+        return f"{self.teacher.full_name} – {self.discipline.name} ({self.lesson_type.name}){curriculum_info}"
 
 
 # 11. Время проведения пар (справочник)
@@ -551,7 +593,8 @@ class ScheduleEntry(models.Model):
                 is_cancelled=False
             ).exclude(pk=self.pk).select_related('time_slot'))
 
-            teacher_total_minutes = sum(slot_minutes(e.time_slot) for e in teacher_entries) + slot_minutes(self.time_slot)
+            teacher_total_minutes = sum(slot_minutes(e.time_slot) for e in teacher_entries) + slot_minutes(
+                self.time_slot)
             if teacher_total_minutes > 480:
                 errors['teacher_assignment'] = 'Преподаватель не может работать больше 8 астрономических часов в день.'
 
@@ -578,9 +621,9 @@ class ScheduleEntry(models.Model):
 
                 for prev, curr in zip(entries, entries[1:]):
                     gap = int((
-                        datetime.combine(date.min, curr.time_slot.start_time) -
-                        datetime.combine(date.min, prev.time_slot.end_time)
-                    ).total_seconds() / 60)
+                                      datetime.combine(date.min, curr.time_slot.start_time) -
+                                      datetime.combine(date.min, prev.time_slot.end_time)
+                              ).total_seconds() / 60)
 
                     if gap > 90:
                         errors['time_slot'] = 'Между учебными занятиями не должно быть перерыва более 1,5 часа.'
@@ -589,6 +632,27 @@ class ScheduleEntry(models.Model):
                         travel = get_travel_minutes(prev.room.building, curr.room.building)
                         if travel > gap:
                             errors['room'] = 'Недостаточно времени на переход между корпусами.'
+
+            # ==================== НОВАЯ ПРОВЕРКА ====================
+            # Не больше 36 астрономических часов в неделю (по ТК РФ)
+            # Вычисляем начало и конец недели (понедельник-воскресенье)
+            week_start = self.working_day.date - timedelta(days=self.working_day.date.weekday())
+            week_end = week_start + timedelta(days=6)
+
+            # Все занятия преподавателя за эту неделю с такой же чётностью
+            week_entries = ScheduleEntry.objects.filter(
+                semester=self.semester,
+                teacher_assignment__teacher=self.teacher_assignment.teacher,
+                working_day__date__gte=week_start,
+                working_day__date__lte=week_end,
+                week_parity=self.week_parity,
+                is_cancelled=False
+            ).exclude(pk=self.pk).select_related('time_slot')
+
+            # Суммируем минуты (включая текущее занятие)
+            week_minutes = sum(slot_minutes(e.time_slot) for e in week_entries) + slot_minutes(self.time_slot)
+            if week_minutes > 2160:  # 36 часов * 60 минут
+                errors['teacher_assignment'] = 'Преподаватель не может работать больше 36 часов в неделю.'
 
         if errors:
             raise ValidationError(errors)

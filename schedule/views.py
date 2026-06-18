@@ -401,3 +401,18 @@ def teacher_workload_view(request):
     return render(request, 'schedule/teacher_workload.html', {
         'workload': workload.values(),
     })
+
+
+def reschedule_entry_view(request, entry_id):
+    entry = get_object_or_404(ScheduleEntry, pk=entry_id)
+    if request.method == 'POST':
+        new_day = request.POST.get('new_day')
+        new_time = request.POST.get('new_time')
+        # логика переноса с проверками
+        entry.working_day_id = new_day
+        entry.time_slot_id = new_time
+        entry.replacement = True
+        entry.save()
+        messages.success(request, 'Занятие перенесено')
+        return redirect('schedule:group_schedule', group_id=entry.student_group.id)
+    return render(request, 'schedule/reschedule.html', {'entry': entry})

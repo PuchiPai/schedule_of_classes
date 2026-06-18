@@ -20,4 +20,5 @@ urlpatterns = [
     path('teacher-assignments/', views.teacher_assignment_report_view, name='teacher_assignment_report'),
     path('teacher-workload/', views.teacher_workload_view, name='teacher_workload'),
     path('copy-schedule/', views.copy_schedule_view, name='copy_schedule'),
+    path('reschedule/<int:entry_id>/', views.reschedule_entry_view, name='reschedule_entry'),
 ]
