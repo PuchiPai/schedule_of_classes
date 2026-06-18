@@ -28,6 +28,9 @@
         </div>
         <div>Студентов: {{ group.student_count }}</div>
         <a href="{% url 'schedule:group_schedule' group.id %}">Открыть расписание</a>
+        {% if semester %}
+            <a href="{% url 'schedule:group_workload_report' group.id semester.id %}">Нагрузка группы</a>
+        {% endif %}
     </div>
 {% empty %}
     <p>Групп пока нет.</p>

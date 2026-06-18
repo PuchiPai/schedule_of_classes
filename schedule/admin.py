@@ -13,6 +13,9 @@ admin.site.register(Curriculum)
 admin.site.register(TeacherAssignment)
 admin.site.register(TimeSlot)
 admin.site.register(WorkingDay)
+admin.site.register(Semester)
+admin.site.register(Holiday)
+
 
 @admin.register(ScheduleEntry)
 class ScheduleEntryAdmin(admin.ModelAdmin):

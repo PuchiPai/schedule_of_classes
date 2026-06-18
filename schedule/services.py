@@ -4,7 +4,8 @@ from datetime import date, datetime
 
 from django.db import transaction, IntegrityError
 from django.core.exceptions import ValidationError
-from django.db.models import Q, Count, Sum
+from django.db.models import Q, Count, Sum, F, Value
+from django.db.models.functions import Coalesce
 
 from .models import (
     Semester,
@@ -942,18 +943,23 @@ def get_department_teacher_plan_rows(department, semester=None):
 
 def get_group_workload_summary(student_group_id, semester_id):
     """
-    Возвращает словарь с суммарной нагрузкой по типам занятий
+    Возвращает список словарей с суммарной нагрузкой по типам занятий
     для конкретной группы и семестра.
     """
-    result = ScheduleEntry.objects.filter(
-        student_group_id=student_group_id,
-        semester_id=semester_id
-    ).values(
-        'lesson_type__name'
-    ).annotate(
-        total_hours=Sum('lesson_type__duration_minutes') / 60.0,  # переводим минуты в часы
-        total_lessons=Count('id')
-    ).order_by('lesson_type__name')
-
-    # Преобразуем в список словарей для удобства в шаблоне
+    result = (
+        ScheduleEntry.objects
+        .filter(
+            student_group_id=student_group_id,
+            semester_id=semester_id
+        )
+        .values(lesson_type_name=F('teacher_assignment__lesson_type__name'))
+        .annotate(
+            total_hours=Coalesce(
+                Sum('teacher_assignment__lesson_type__default_duration_minutes'),
+                Value(0)
+            ) / 60.0,
+            total_lessons=Count('id')
+        )
+        .order_by('lesson_type_name')
+    )
     return list(result)

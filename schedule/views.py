@@ -429,3 +429,16 @@ def group_workload_report(request, group_id, semester_id):
         'workload_data': data,
     }
     return render(request, 'schedule/group_workload_report.html', context)
+
+def home_view(request):
+    groups = StudentGroup.objects.all()
+    teachers = Teacher.objects.all()
+    rooms = Room.objects.all()
+    semester = Semester.objects.first()  # или другой способ получить активный семестр
+    context = {
+        'groups': groups,
+        'teachers': teachers,
+        'rooms': rooms,
+        'semester': semester,
+    }
+    return render(request, 'schedule/home.html', context)
