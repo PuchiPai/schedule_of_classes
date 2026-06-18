@@ -5,6 +5,15 @@
 {% block content %}
 <h1>Расписание учебных занятий</h1>
 
+<!-- Навигационное меню -->
+<div class="nav-menu">
+    <a href="{% url 'schedule:schedule_table' %}" class="nav-btn">Общее расписание</a>
+    <a href="{% url 'schedule:teacher_assignment_report' %}" class="nav-btn">Учебные поручения</a>
+    <a href="{% url 'schedule:teacher_workload' %}" class="nav-btn">Нагрузка преподавателей</a>
+    <a href="{% url 'schedule:reports_home' %}" class="nav-btn">Отчёты</a>
+    <a href="{% url 'schedule:room_summary' %}" class="nav-btn">Загрузка аудиторий</a>
+</div>
+
 <h2>Учебные группы</h2>
 {% for group in groups %}
     <div class="card">
@@ -46,4 +55,28 @@
 {% empty %}
     <p>Аудиторий пока нет.</p>
 {% endfor %}
+
+<style>
+.nav-menu {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 20px 0 30px 0;
+}
+
+.nav-btn {
+    display: inline-block;
+    padding: 12px 20px;
+    background-color: #2c3e50;
+    color: white;
+    text-decoration: none;
+    border-radius: 6px;
+    font-weight: bold;
+    transition: background-color 0.2s;
+}
+
+.nav-btn:hover {
+    background-color: #34495e;
+}
+</style>
 {% endblock %}

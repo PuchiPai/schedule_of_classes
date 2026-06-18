@@ -10,12 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
-# Add these at the top of your settings.py
 import os
-import dj_database_url
-from dotenv import load_dotenv
-from urllib.parse import urlparse, parse_qsl
-load_dotenv()
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -80,11 +75,14 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
 DATABASES = {
-    'default': dj_database_url.config(
-        default=os.getenv("DATABASE_URL"),
-        conn_max_age=600,
-        ssl_require=True
-    )
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'postgres',
+        'USER': 'postgres.oobhdxanufbzuykfuzvy',
+        'PASSWORD': '7jjTC0Ea4aPfHqhF',
+        'HOST': 'aws-1-eu-central-2.pooler.supabase.com',
+        'PORT': '6543',
+    }
 }
 
 

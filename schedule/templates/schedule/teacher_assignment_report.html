@@ -1,10 +1,68 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>$Title$</title>
-</head>
-<body>
-$END$
-</body>
-</html>
+{% extends 'schedule/base.html' %}
+
+{% block content %}
+<h2>Отчёт по учебным поручениям преподавателей</h2>
+
+<form method="get" style="margin-bottom: 20px;">
+    <label for="teacher">Преподаватель:</label>
+    <select name="teacher" id="teacher" onchange="this.form.submit()">
+        <option value="">Все преподаватели</option>
+        {% for teacher in teachers %}
+        <option value="{{ teacher.id }}" {% if selected_teacher == teacher.id|stringformat:"d" %}selected{% endif %}>
+            {{ teacher.full_name }}
+        </option>
+        {% endfor %}
+    </select>
+</form>
+
+<table class="report-table">
+    <thead>
+        <tr>
+            <th>Преподаватель</th>
+            <th>Подразделение</th>
+            <th>Дисциплина</th>
+            <th>Вид занятия</th>
+            <th>Часов</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for assignment in assignments %}
+        <tr>
+            <td>{{ assignment.teacher.full_name }}</td>
+            <td>{{ assignment.teacher.department.name }}</td>
+            <td>{{ assignment.discipline.name }}</td>
+            <td>{{ assignment.lesson_type.name }}</td>
+            <td>{{ assignment.hours_allocated }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+            <td colspan="5">Нет данных</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<style>
+.report-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+
+.report-table th,
+.report-table td {
+    border: 1px solid #ddd;
+    padding: 10px;
+    text-align: left;
+}
+
+.report-table th {
+    background-color: #34495e;
+    color: white;
+}
+
+.report-table tr:nth-child(even) {
+    background-color: #f2f2f2;
+}
+</style>
+{% endblock %}

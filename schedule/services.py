@@ -15,8 +15,8 @@ from .models import (
     LessonType,
     Room,
     AcademicGroup,
-    Teacher,
-    Department,
+    Teacher
+
 )
 
 import logging
@@ -585,7 +585,7 @@ def get_department_teacher_plan(department):
     return teachers, grouped
 
 
-def get_multi_group_chessboard(groups):
+def get_multi_group_chessboard(groups, start_date=None, end_date=None):
     groups = list(groups.select_related('academic_group').order_by('name'))
 
     entries = (
@@ -600,8 +600,13 @@ def get_multi_group_chessboard(groups):
             'time_slot',
             'working_day',
         )
-        .order_by('working_day__date', 'time_slot__pair_number')
     )
+
+    # Фильтр по диапазону дат (для одной недели)
+    if start_date and end_date:
+        entries = entries.filter(working_day__date__gte=start_date, working_day__date__lte=end_date)
+
+    entries = entries.order_by('working_day__date', 'time_slot__pair_number')
 
     entry_map = defaultdict(list)
     for entry in entries:
@@ -609,9 +614,12 @@ def get_multi_group_chessboard(groups):
 
     days = (
         WorkingDay.objects
-        .filter(is_working=True, date__gte="2026-09-01", date__lte="2026-12-31")
-        .order_by('date')
+        .filter(is_working=True)
     )
+    if start_date and end_date:
+        days = days.filter(date__gte=start_date, date__lte=end_date)
+    days = days.order_by('date')
+
     slots = TimeSlot.objects.filter(pair_number__lte=5).order_by('pair_number')
 
     board = []
@@ -633,7 +641,6 @@ def get_multi_group_chessboard(groups):
         })
 
     return groups, board
-
 
 def get_room_summary():
     qs = (

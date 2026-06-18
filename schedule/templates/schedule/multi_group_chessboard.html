@@ -5,55 +5,296 @@
 {% block content %}
 <h1>Шахматная ведомость нескольких групп</h1>
 
-<form method="get" class="card">
-    <strong>Выбери группы:</strong><br><br>
-    {% for group in all_groups %}
-        <label style="display:block; margin-bottom:6px;">
-            <input type="checkbox" name="group" value="{{ group.id }}"
-                   {% if group.id|stringformat:"s" in selected_ids %}checked{% endif %}>
-            {{ group.name }}
-        </label>
-    {% endfor %}
-    <br>
-    <button type="submit">Показать</button>
+<form method="get" class="filter-form">
+    <div class="filter-header">
+        <strong>Выбери группы:</strong>
+        <button type="submit" class="btn-apply">Показать</button>
+    </div>
+    <div class="groups-grid">
+        {% for group in all_groups %}
+            <label class="group-checkbox">
+                <input type="checkbox" name="group" value="{{ group.id }}"
+                       {% if group.id|stringformat:"s" in selected_ids %}checked{% endif %}>
+                {{ group.name }}
+            </label>
+        {% endfor %}
+    </div>
 </form>
 
 {% if groups %}
-    <table>
+    <!-- Навигация по неделям -->
+    <div class="week-navigation">
+        {% if prev_week %}
+            <a href="?{% for gid in selected_ids %}group={{ gid }}&{% endfor %}week={{ prev_week }}" class="nav-arrow">
+                ← Предыдущая неделя
+            </a>
+        {% else %}
+            <span class="nav-arrow disabled">← Предыдущая неделя</span>
+        {% endif %}
+
+        <div class="week-info">
+            <strong>Неделя {{ current_week }}</strong><br>
+            <span class="muted">{{ week_start|date:"d.m.Y" }} — {{ week_end|date:"d.m.Y" }}</span>
+        </div>
+
+        <a href="?{% for gid in selected_ids %}group={{ gid }}&{% endfor %}week={{ next_week }}" class="nav-arrow">
+            Следующая неделя →
+        </a>
+    </div>
+
+    <!-- Таблица шахматки -->
+    <table class="chessboard-table">
         <thead>
             <tr>
-                <th>Дата</th>
-                <th>Пара</th>
+                <th class="col-time">Время</th>
                 {% for group in groups %}
-                    <th>{{ group.name }}</th>
+                    <th class="col-group">{{ group.name }}</th>
                 {% endfor %}
             </tr>
         </thead>
         <tbody>
             {% for day in board %}
+                <tr class="day-header">
+                    <td colspan="{{ groups|length|add:1 }}">
+                        <strong>{{ day.working_day.date|date:"d.m.Y" }}</strong>
+                        ({{ day.working_day.get_weekday_display }})
+                    </td>
+                </tr>
                 {% for row in day.rows %}
                     <tr>
-                        <td>{{ day.working_day.date }}</td>
-                        <td>{{ row.time_slot.pair_number }}</td>
+                        <td class="time-slot">
+                            <strong>{{ row.time_slot.pair_number }} пара</strong><br>
+                            {{ row.time_slot.start_time|time:"H:i" }} - {{ row.time_slot.end_time|time:"H:i" }}
+                        </td>
 
                         {% for cell in row.cells %}
-                            <td>
+                            <td class="day-cell">
                                 {% if cell %}
-                                    <strong>{{ cell.teacher_assignment.discipline.name }}</strong><br>
-                                    {{ cell.teacher_assignment.lesson_type.name }}<br>
-                                    {{ cell.teacher_assignment.teacher.full_name }}<br>
-                                    {% if cell.room %}
-                                        {{ cell.room.name }}
-                                    {% else %}
-                                        Онлайн
-                                    {% endif %}
+                                    <div class="schedule-item">
+                                        <strong>{{ cell.teacher_assignment.discipline.name }}</strong>
+                                        <div class="item-type">{{ cell.teacher_assignment.lesson_type.name }}</div>
+                                        <div class="item-teacher">{{ cell.teacher_assignment.teacher.full_name }}</div>
+                                        <div class="item-room">
+                                            {% if cell.room %}
+                                                📍 {{ cell.room.name }} ({{ cell.room.building.name }})
+                                            {% else %}
+                                                💻 Онлайн
+                                            {% endif %}
+                                        </div>
+                                    </div>
                                 {% endif %}
                             </td>
                         {% endfor %}
                     </tr>
                 {% endfor %}
+            {% empty %}
+                <tr>
+                    <td colspan="{{ groups|length|add:1 }}" style="text-align: center; padding: 20px;">
+                        На эту неделю занятий нет.
+                    </td>
+                </tr>
             {% endfor %}
         </tbody>
     </table>
 {% endif %}
+
+<style>
+.filter-form {
+    background-color: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.filter-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.filter-header strong {
+    font-size: 16px;
+    color: #2c3e50;
+}
+
+.groups-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+}
+
+.group-checkbox {
+    display: block;
+    padding: 6px 10px;
+    background-color: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.group-checkbox:hover {
+    background-color: #eaf4fb;
+}
+
+.group-checkbox input {
+    margin-right: 6px;
+}
+
+.btn-apply {
+    padding: 8px 20px;
+    background-color: #3498db;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 14px;
+    margin-top: 0;
+}
+
+.btn-apply:hover {
+    background-color: #2980b9;
+}
+
+/* Навигация по неделям */
+.week-navigation {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    background-color: #2c3e50;
+    color: white;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.nav-arrow {
+    color: white;
+    text-decoration: none;
+    font-weight: bold;
+    padding: 8px 16px;
+    border: 2px solid white;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.nav-arrow:hover {
+    background-color: white;
+    color: #2c3e50;
+}
+
+.nav-arrow.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    border-color: #95a5a6;
+    color: #95a5a6;
+}
+
+.week-info {
+    text-align: center;
+}
+
+.week-info strong {
+    font-size: 18px;
+}
+
+.week-info .muted {
+    color: #bdc3c7;
+    font-size: 14px;
+}
+
+/* Таблица шахматки */
+.chessboard-table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    margin-top: 20px;
+    font-size: 12px;
+    background-color: white;
+}
+
+.chessboard-table th,
+.chessboard-table td {
+    border: 1px solid #ddd;
+    padding: 6px;
+    text-align: left;
+    vertical-align: top;
+    word-wrap: break-word;
+}
+
+.chessboard-table th {
+    background-color: #8e44ad;
+    color: white;
+    font-weight: bold;
+    position: sticky;
+    top: 0;
+    padding: 10px 6px;
+}
+
+.col-time {
+    width: 12%;
+    text-align: center;
+}
+
+.col-group {
+    width: calc(88% / {{ groups|length }});
+}
+
+.time-slot {
+    font-weight: bold;
+    background-color: #f4ecf7;
+    text-align: center;
+}
+
+.day-header td {
+    background-color: #ecf0f1;
+    padding: 8px;
+    font-weight: bold;
+    color: #2c3e50;
+}
+
+.day-cell {
+    min-height: 60px;
+}
+
+.schedule-item {
+    padding: 5px 7px;
+    background-color: #f4ecf7;
+    border-left: 4px solid #8e44ad;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 1.3;
+}
+
+.schedule-item strong {
+    color: #6c3483;
+    font-size: 12px;
+    display: block;
+    margin-bottom: 2px;
+}
+
+.item-type {
+    color: #7f8c8d;
+    font-size: 10px;
+    margin-bottom: 2px;
+}
+
+.item-teacher {
+    font-size: 11px;
+    color: #34495e;
+    margin-bottom: 2px;
+}
+
+.item-room {
+    font-size: 10px;
+    color: #555;
+}
+
+.muted {
+    color: #7f8c8d;
+    font-size: 14px;
+}
+</style>
 {% endblock %}

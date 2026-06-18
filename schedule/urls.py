@@ -14,4 +14,9 @@ urlpatterns = [
     path('reports/attestation/', views.attestation_schedule_view, name='attestation_schedule'),
     path('reports/department/<int:department_id>/', views.department_teacher_plan_view, name='department_teacher_plan'),
     path('reports/rooms/', views.room_summary_view, name='room_summary'),
+
+    # Новые URL
+    path('schedule-table/', views.schedule_table_view, name='schedule_table'),
+    path('teacher-assignments/', views.teacher_assignment_report_view, name='teacher_assignment_report'),
+    path('teacher-workload/', views.teacher_workload_view, name='teacher_workload'),
 ]

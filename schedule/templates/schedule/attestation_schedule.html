@@ -5,61 +5,210 @@
 {% block content %}
 <h1>Расписание консультаций, зачётов и экзаменов</h1>
 
-<div class="card">
-    <a href="?kind=all">Все</a> |
-    <a href="?kind=consultation">Консультации</a> |
-    <a href="?kind=credit">Зачёты</a> |
-    <a href="?kind=exam">Экзамены</a>
+<!-- Переключатель типа аттестации -->
+<div class="kind-switcher">
+    <a href="?kind=all{% for gid in selected_ids %}&group={{ gid }}{% endfor %}"
+       class="kind-btn {% if kind == 'all' %}active{% endif %}">Все</a>
+    <a href="?kind=consultation{% for gid in selected_ids %}&group={{ gid }}{% endfor %}"
+       class="kind-btn {% if kind == 'consultation' %}active{% endif %}">Консультации</a>
+    <a href="?kind=credit{% for gid in selected_ids %}&group={{ gid }}{% endfor %}"
+       class="kind-btn {% if kind == 'credit' %}active{% endif %}">Зачёты</a>
+    <a href="?kind=exam{% for gid in selected_ids %}&group={{ gid }}{% endfor %}"
+       class="kind-btn {% if kind == 'exam' %}active{% endif %}">Экзамены</a>
 </div>
 
-<form method="get" class="card">
+<!-- Фильтр по группам -->
+<form method="get" class="filter-form">
     <input type="hidden" name="kind" value="{{ kind }}">
-    <strong>Фильтр по группам:</strong><br><br>
-    {% for group in all_groups %}
-        <label style="display:block; margin-bottom:6px;">
-            <input type="checkbox" name="group" value="{{ group.id }}"
-                   {% if group.id|stringformat:"s" in selected_ids %}checked{% endif %}>
-            {{ group.name }}
-        </label>
-    {% endfor %}
-    <br>
-    <button type="submit">Показать</button>
+    <div class="filter-header">
+        <strong>Фильтр по группам:</strong>
+        <button type="submit" class="btn-apply">Показать</button>
+    </div>
+    <div class="groups-grid">
+        {% for group in all_groups %}
+            <label class="group-checkbox">
+                <input type="checkbox" name="group" value="{{ group.id }}"
+                       {% if group.id|stringformat:"s" in selected_ids %}checked{% endif %}>
+                {{ group.name }}
+            </label>
+        {% endfor %}
+    </div>
 </form>
 
-<table>
-    <thead>
-        <tr>
-            <th>Дата</th>
-            <th>Пара</th>
-            <th>Группа</th>
-            <th>Предмет</th>
-            <th>Тип занятия</th>
-            <th>Преподаватель</th>
-            <th>Место</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for entry in entries %}
+{% if entries %}
+    <table class="attestation-table">
+        <thead>
             <tr>
-                <td>{{ entry.working_day.date }}</td>
-                <td>{{ entry.time_slot.pair_number }}</td>
-                <td>{{ entry.student_group.name }}</td>
-                <td>{{ entry.teacher_assignment.discipline.name }}</td>
-                <td>{{ entry.teacher_assignment.lesson_type.name }}</td>
-                <td>{{ entry.teacher_assignment.teacher.full_name }}</td>
-                <td>
-                    {% if entry.room %}
-                        {{ entry.room.building.name }}, {{ entry.room.name }}
-                    {% else %}
-                        Онлайн
-                    {% endif %}
-                </td>
+                <th>Дата</th>
+                <th>День</th>
+                <th>Пара</th>
+                <th>Время</th>
+                <th>Группа</th>
+                <th>Предмет</th>
+                <th>Тип</th>
+                <th>Преподаватель</th>
+                <th>Место</th>
             </tr>
-        {% empty %}
-            <tr>
-                <td colspan="7">Записей нет.</td>
-            </tr>
-        {% endfor %}
-    </tbody>
-</table>
+        </thead>
+        <tbody>
+            {% for entry in entries %}
+                <tr>
+                    <td>{{ entry.working_day.date|date:"d.m.Y" }}</td>
+                    <td>{{ entry.working_day.get_weekday_display }}</td>
+                    <td><strong>{{ entry.time_slot.pair_number }}</strong></td>
+                    <td>{{ entry.time_slot.start_time|time:"H:i" }} - {{ entry.time_slot.end_time|time:"H:i" }}</td>
+                    <td><strong>{{ entry.student_group.name }}</strong></td>
+                    <td>{{ entry.teacher_assignment.discipline.name }}</td>
+                    <td>{{ entry.teacher_assignment.lesson_type.name }}</td>
+                    <td>{{ entry.teacher_assignment.teacher.full_name }}</td>
+                    <td>
+                        {% if entry.room %}
+                             {{ entry.room.name }} ({{ entry.room.building.name }})
+                        {% else %}
+                            💻 Онлайн
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% else %}
+    <div class="empty-state">
+        <p>Записей об аттестации нет.</p>
+    </div>
+{% endif %}
+
+<style>
+/* Переключатель типа */
+.kind-switcher {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.kind-btn {
+    padding: 10px 20px;
+    background-color: #ecf0f1;
+    color: #2c3e50;
+    text-decoration: none;
+    border-radius: 6px;
+    font-weight: bold;
+    transition: all 0.2s;
+    border: 2px solid transparent;
+}
+
+.kind-btn:hover {
+    background-color: #d5dbdb;
+}
+
+.kind-btn.active {
+    background-color: #c0392b;
+    color: white;
+    border-color: #922b21;
+}
+
+/* Фильтр */
+.filter-form {
+    background-color: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.filter-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.filter-header strong {
+    font-size: 16px;
+    color: #2c3e50;
+}
+
+.groups-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+}
+
+.group-checkbox {
+    display: block;
+    padding: 6px 10px;
+    background-color: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.group-checkbox:hover {
+    background-color: #fdedec;
+}
+
+.group-checkbox input {
+    margin-right: 6px;
+}
+
+.btn-apply {
+    padding: 8px 20px;
+    background-color: #c0392b;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 14px;
+}
+
+.btn-apply:hover {
+    background-color: #922b21;
+}
+
+/* Таблица аттестации */
+.attestation-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    background-color: white;
+    margin-top: 20px;
+}
+
+.attestation-table th,
+.attestation-table td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.attestation-table th {
+    background-color: #922b21;
+    color: white;
+    font-weight: bold;
+    position: sticky;
+    top: 0;
+}
+
+.attestation-table tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+.attestation-table tr:hover {
+    background-color: #fef9f9;
+}
+
+/* Пустое состояние */
+.empty-state {
+    text-align: center;
+    padding: 40px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    color: #7f8c8d;
+    font-size: 16px;
+    margin-top: 20px;
+}
+</style>
 {% endblock %}

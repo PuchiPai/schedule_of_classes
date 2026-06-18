@@ -3,48 +3,197 @@
 {% block title %}Нагрузка {{ teacher.full_name }}{% endblock %}
 
 {% block content %}
-<h1>Нагрузка преподавателя {{ teacher.full_name }}</h1>
+<h1>Расписание преподавателя</h1>
 
-<p class="muted">
-    {{ teacher.position }} · {{ teacher.department.name }}
-</p>
+<div class="teacher-info">
+    <h2>{{ teacher.full_name }}</h2>
+    <p class="muted">
+        {{ teacher.position }}
+        {% if teacher.department %} · {{ teacher.department.name }}{% endif %}
+        {% if teacher.academic_degree %} · {{ teacher.academic_degree }}{% endif %}
+    </p>
+</div>
 
-<table>
+<table class="schedule-grid">
     <thead>
         <tr>
-            <th>Дата</th>
-            <th>День недели</th>
-            <th>Пара</th>
-            <th>Группа</th>
-            <th>Предмет</th>
-            <th>Тип занятия</th>
-            <th>Место проведения</th>
-            <th>Чётность</th>
+            <th class="col-time">Время</th>
+            <th class="col-day">Понедельник</th>
+            <th class="col-day">Вторник</th>
+            <th class="col-day">Среда</th>
+            <th class="col-day">Четверг</th>
+            <th class="col-day">Пятница</th>
+            <th class="col-day">Суббота</th>
         </tr>
     </thead>
     <tbody>
-        {% for entry in schedule %}
-            <tr>
-                <td>{{ entry.working_day.date }}</td>
-                <td>{{ entry.working_day.get_weekday_display }}</td>
-                <td>{{ entry.time_slot.pair_number }}</td>
-                <td>{{ entry.student_group.name }}</td>
-                <td>{{ entry.teacher_assignment.discipline.name }}</td>
-                <td>{{ entry.teacher_assignment.lesson_type.name }}</td>
-                <td>
-                    {% if entry.room %}
-                        {{ entry.room.building.name }}, {{ entry.room.name }}
-                    {% else %}
-                        Онлайн
+        {% for slot in time_slots %}
+        <tr>
+            <td class="time-slot">
+                <strong>Пара {{ slot.pair_number }}</strong><br>
+                {{ slot.start_time|time:"H:i" }} - {{ slot.end_time|time:"H:i" }}
+            </td>
+            {% for day_num in day_numbers %}
+            <td class="day-cell">
+                {% for entry in entries_by_slot %}
+                    {% if entry.time_slot.pair_number == slot.pair_number and entry.working_day.weekday == day_num %}
+                    <div class="schedule-item teacher-item">
+                        <div class="item-header">
+                            <strong>{{ entry.teacher_assignment.discipline.name }}</strong>
+                            <span class="parity-badge parity-{{ entry.week_parity }}">
+                                {% if entry.week_parity == 'even' %}чёт.
+                                {% elif entry.week_parity == 'odd' %}нечёт.
+                                {% endif %}
+                            </span>
+                        </div>
+                        <div class="item-type">{{ entry.teacher_assignment.lesson_type.name }}</div>
+                        <div class="item-group">👥 {{ entry.student_group.name }}</div>
+                        <div class="item-room">
+                            {% if entry.room %}
+                                📍 {{ entry.room.name }} ({{ entry.room.building.name }})
+                            {% else %}
+                                💻 Онлайн
+                            {% endif %}
+                        </div>
+                    </div>
                     {% endif %}
-                </td>
-                <td>{{ entry.get_week_parity_display }}</td>
-            </tr>
-        {% empty %}
-            <tr>
-                <td colspan="8">У преподавателя пока нет занятий.</td>
-            </tr>
+                {% endfor %}
+            </td>
+            {% endfor %}
+        </tr>
         {% endfor %}
     </tbody>
 </table>
+
+<style>
+.teacher-info {
+    margin-bottom: 20px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+}
+
+.teacher-info h2 {
+    margin: 0 0 5px 0;
+    color: #2c3e50;
+}
+
+.schedule-grid {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    margin-top: 20px;
+    font-size: 12px;
+    background-color: white;
+}
+
+.schedule-grid th,
+.schedule-grid td {
+    border: 1px solid #ddd;
+    padding: 6px;
+    text-align: left;
+    vertical-align: top;
+    word-wrap: break-word;
+}
+
+.schedule-grid th {
+    background-color: #27ae60; /* Зеленый для преподавателей */
+    color: white;
+    font-weight: bold;
+    position: sticky;
+    top: 0;
+    padding: 10px 6px;
+}
+
+.schedule-grid tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+.col-time {
+    width: 12%;
+    text-align: center;
+}
+
+.col-day {
+    width: 14.66%;
+}
+
+.time-slot {
+    font-weight: bold;
+    background-color: #eafaf1; /* Светло-зеленый фон для времени */
+    text-align: center;
+}
+
+.day-cell {
+    min-height: 60px;
+}
+
+.schedule-item {
+    margin-bottom: 6px;
+    padding: 6px 8px;
+    background-color: #eafaf1;
+    border-left: 4px solid #27ae60; /* Зеленая полоска */
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 1.3;
+}
+
+.schedule-item:last-child {
+    margin-bottom: 0;
+}
+
+.item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 4px;
+    margin-bottom: 3px;
+}
+
+.item-header strong {
+    color: #1e8449;
+    font-size: 12px;
+    flex: 1;
+}
+
+.parity-badge {
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    white-space: nowrap;
+    font-weight: bold;
+    color: white;
+}
+
+.parity-even {
+    background-color: #f39c12;
+}
+
+.parity-odd {
+    background-color: #9b59b6;
+}
+
+.item-type {
+    color: #7f8c8d;
+    font-size: 10px;
+    margin-bottom: 2px;
+}
+
+.item-group {
+    font-size: 11px;
+    color: #34495e;
+    font-weight: bold;
+    margin-bottom: 2px;
+}
+
+.item-room {
+    font-size: 10px;
+    color: #555;
+}
+
+.muted {
+    color: #7f8c8d;
+    font-size: 14px;
+}
+</style>
 {% endblock %}

@@ -46,6 +46,35 @@
             gap: 16px;
             flex-wrap: wrap;
             margin-bottom: 20px;
+            align-items: center;
+        }
+        .nav a {
+            padding: 8px 16px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+        .nav a.home-link {
+            background-color: #0b57d0;
+            color: white;
+            font-weight: bold;
+        }
+        .nav a.home-link:hover {
+            background-color: #0947a8;
+            text-decoration: none;
+        }
+        .nav a.back-link {
+            background-color: #6c757d;
+            color: white;
+            font-weight: bold;
+        }
+        .nav a.back-link:hover {
+            background-color: #5a6268;
+            text-decoration: none;
+        }
+        .nav a.back-link.disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            pointer-events: none;
         }
         .card {
             padding: 12px;
@@ -62,10 +91,21 @@
 <body>
     <div class="container">
         <div class="nav">
-            <a href="{% url 'schedule:home' %}">Главная</a>
+            <a href="{% url 'schedule:home' %}" class="home-link">Главная</a>
+            <a href="#" class="back-link" id="backBtn" onclick="history.back(); return false;">← Назад</a>
         </div>
 
         {% block content %}{% endblock %}
     </div>
+
+    <script>
+        // Проверяем, есть ли история переходов
+        if (window.history.length <= 1) {
+            // Если истории нет — делаем кнопку неактивной
+            var backBtn = document.getElementById('backBtn');
+            backBtn.classList.add('disabled');
+            backBtn.onclick = function(e) { e.preventDefault(); };
+        }
+    </script>
 </body>
 </html>
