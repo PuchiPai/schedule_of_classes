@@ -1,9 +1,12 @@
 from django.shortcuts import render, get_object_or_404
-from django.db.models import Count
+from django.db.models import Sum
 from datetime import date, timedelta
 
 from django.contrib import messages
 from django.shortcuts import redirect
+
+from collections import defaultdict
+from .models import StudentGroup, TimeSlot, ScheduleEntry
 
 
 def copy_schedule_view(request):
@@ -117,18 +120,39 @@ def home_view(request):
 
 def group_schedule_view(request, group_id):
     group = get_object_or_404(StudentGroup, pk=group_id)
-    schedule = get_group_schedule(group)
 
-    # Подготавливаем данные для сетки
-    time_slots = TimeSlot.objects.all().order_by('pair_number')
-    day_numbers = [1, 2, 3, 4, 5, 6]  # Пн-Сб
+    week_parity = request.GET.get('week_parity', 'all')  # all / even / odd / both
+    entries = get_group_schedule(group)
+
+    if week_parity in ['even', 'odd', 'both']:
+        entries = entries.filter(week_parity=week_parity)
+
+    time_slots = list(TimeSlot.objects.all().order_by('pair_number'))
+    day_numbers = [1, 2, 3, 4, 5, 6]
+
+    cells = defaultdict(list)
+    for entry in entries.select_related(
+        'teacher_assignment__teacher',
+        'teacher_assignment__discipline',
+        'teacher_assignment__lesson_type',
+        'room__building',
+        'time_slot',
+        'working_day'
+    ):
+        cells[(entry.time_slot.pair_number, entry.working_day.weekday)].append(entry)
+
+    rows = []
+    for slot in time_slots:
+        row = {'slot': slot, 'cells': []}
+        for day in day_numbers:
+            row['cells'].append(cells.get((slot.pair_number, day), []))
+        rows.append(row)
 
     return render(request, 'schedule/group_schedule.html', {
         'group': group,
-        'schedule': schedule,
-        'time_slots': time_slots,
+        'rows': rows,
         'day_numbers': day_numbers,
-        'entries_by_slot': schedule,
+        'week_parity': week_parity,
     })
 
 
@@ -349,7 +373,7 @@ def teacher_workload_view(request):
         'teacher__department__name',
         'lesson_type__name'
     ).annotate(
-        total_hours=Count('id')
+        total_hours=Sum('hours_allocated')
     ).order_by('teacher__full_name')
 
     # Агрегируем по преподавателям
@@ -367,7 +391,7 @@ def teacher_workload_view(request):
             }
 
         lesson_type = item['lesson_type__name'].lower()
-        hours = item['total_hours']
+        hours = item['total_hours'] or 0
 
         if 'лекц' in lesson_type:
             workload[teacher_id]['lectures'] += hours

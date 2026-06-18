@@ -11,6 +11,17 @@
     {% endif %}
 </p>
 
+<form method="get" style="margin-bottom: 16px;">
+    <label for="week_parity">Неделя:</label>
+    <select name="week_parity" id="week_parity">
+        <option value="all" {% if week_parity == 'all' %}selected{% endif %}>Все недели</option>
+        <option value="even" {% if week_parity == 'even' %}selected{% endif %}>Чётная</option>
+        <option value="odd" {% if week_parity == 'odd' %}selected{% endif %}>Нечётная</option>
+        <option value="both" {% if week_parity == 'both' %}selected{% endif %}>Обе недели</option>
+    </select>
+    <button type="submit">Показать</button>
+</form>
+
 <table class="schedule-grid">
     <thead>
         <tr>
@@ -24,22 +35,24 @@
         </tr>
     </thead>
     <tbody>
-        {% for slot in time_slots %}
+        {% for row in rows %}
         <tr>
             <td class="time-slot">
-                <strong>Пара {{ slot.pair_number }}</strong><br>
-                {{ slot.start_time|time:"H:i" }} - {{ slot.end_time|time:"H:i" }}
+                <strong>Пара {{ row.slot.pair_number }}</strong><br>
+                {{ row.slot.start_time|time:"H:i" }} - {{ row.slot.end_time|time:"H:i" }}
             </td>
-            {% for day_num in day_numbers %}
+
+            {% for cell in row.cells %}
             <td class="day-cell">
-                {% for entry in entries_by_slot %}
-                    {% if entry.time_slot.pair_number == slot.pair_number and entry.working_day.weekday == day_num %}
+                {% if cell %}
+                    {% for entry in cell %}
                     <div class="schedule-item">
                         <div class="item-header">
                             <strong>{{ entry.teacher_assignment.discipline.name }}</strong>
                             <span class="parity-badge parity-{{ entry.week_parity }}">
                                 {% if entry.week_parity == 'even' %}чёт.
                                 {% elif entry.week_parity == 'odd' %}нечёт.
+                                {% else %}обе
                                 {% endif %}
                             </span>
                         </div>
@@ -53,8 +66,8 @@
                             {% endif %}
                         </div>
                     </div>
-                    {% endif %}
-                {% endfor %}
+                    {% endfor %}
+                {% endif %}
             </td>
             {% endfor %}
         </tr>

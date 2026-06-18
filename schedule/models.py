@@ -1,8 +1,15 @@
-from django.db import models
+from django.db import models, transaction
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 from datetime import datetime
+
+def slots_overlap(slot_a, slot_b):
+    """
+    Проверка пересечения двух пар по времени.
+    true, если интервалы пересекаются.
+    """
+    return slot_a.start_time < slot_b.end_time and slot_b.start_time < slot_a.end_time
 
 
 # 1. Подразделения (иерархия: Университет → Школа → Кафедра)
@@ -271,10 +278,24 @@ class WorkingDay(models.Model):
         (1, 'Понедельник'), (2, 'Вторник'), (3, 'Среда'),
         (4, 'Четверг'), (5, 'Пятница'), (6, 'Суббота')
     ]
+
+    semester = models.ForeignKey(
+        'Semester',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='working_days',
+        verbose_name='Семестр'
+    )
     date = models.DateField(unique=True, verbose_name="Дата")
     weekday = models.IntegerField(choices=WEEKDAYS, verbose_name="День недели", default=1)
     is_working = models.BooleanField(default=True, verbose_name="Рабочий день")
-    week_parity = models.CharField(max_length=10, choices=WEEK_PARITY, default='both', verbose_name="Четность недели")
+    week_parity = models.CharField(
+        max_length=10,
+        choices=WEEK_PARITY,
+        default='both',
+        verbose_name="Чётность недели"
+    )
 
     class Meta:
         ordering = ['date']
@@ -294,44 +315,24 @@ class ScheduleEntry(models.Model):
     ]
 
     student_group = models.ForeignKey(
-        'StudentGroup',
-        on_delete=models.CASCADE,
-        related_name='schedule_entries'
+        'StudentGroup', on_delete=models.CASCADE, related_name='schedule_entries'
     )
     teacher_assignment = models.ForeignKey(
-        'TeacherAssignment',
-        on_delete=models.CASCADE,
-        related_name='schedule_entries'
+        'TeacherAssignment', on_delete=models.CASCADE, related_name='schedule_entries'
     )
     room = models.ForeignKey(
-        'Room',
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name='schedule_entries'
+        'Room', on_delete=models.PROTECT, null=True, blank=True, related_name='schedule_entries'
     )
     time_slot = models.ForeignKey(
-        'TimeSlot',
-        on_delete=models.PROTECT,
-        related_name='schedule_entries'
+        'TimeSlot', on_delete=models.PROTECT, related_name='schedule_entries'
     )
     working_day = models.ForeignKey(
-        'WorkingDay',
-        on_delete=models.PROTECT,
-        related_name='schedule_entries'
+        'WorkingDay', on_delete=models.PROTECT, related_name='schedule_entries'
     )
-    week_parity = models.CharField(
-        max_length=10,
-        choices=WEEK_PARITY_CHOICES,
-        default='both'
-    )
+    week_parity = models.CharField(max_length=10, choices=WEEK_PARITY_CHOICES, default='both')
     is_cancelled = models.BooleanField(default=False)
     replacement = models.ForeignKey(
-        'self',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='replacements'
+        'self', on_delete=models.SET_NULL, null=True, blank=True, related_name='replacements'
     )
 
     class Meta:
@@ -356,143 +357,157 @@ class ScheduleEntry(models.Model):
     def clean(self):
         errors = {}
 
-        # 1. Нельзя ставить занятие в нерабочий день
+        def parity_conflict(a, b):
+            if a == 'both' or b == 'both':
+                return True
+            return a == b
+
         if self.working_day and not self.working_day.is_working:
             errors['working_day'] = 'Нельзя ставить занятие в нерабочий день.'
 
-        # 2. Если выбрана аудитория, проверяем вместимость
-        if self.room and self.student_group:
-            if self.room.capacity < self.student_group.student_count:
-                errors['room'] = 'В аудитории недостаточно мест для этой группы.'
+        if self.room and self.student_group and self.room.capacity < self.student_group.student_count:
+            errors['room'] = 'В аудитории недостаточно мест для этой группы.'
 
-        # 3. Лабораторные только в lab / computer
         if self.room and self.teacher_assignment and self.teacher_assignment.lesson_type:
             lesson_name = self.teacher_assignment.lesson_type.name.lower()
             room_type = self.room.room_type.lower()
-
-            if 'лаб' in lesson_name and room_type not in ['lab', 'computer']:
+            if ('лаб' in lesson_name) and room_type not in ['lab', 'computer']:
                 errors['room'] = 'Лабораторные занятия можно проводить только в лаборатории или компьютерном классе.'
 
-        # 4. Не больше 5 пар в день для одной группы
-        if self.student_group and self.working_day:
-            qs = ScheduleEntry.objects.filter(
+        if self.working_day and self.time_slot and self.student_group and self.teacher_assignment:
+            same_day = ScheduleEntry.objects.filter(
+                working_day=self.working_day,
+                is_cancelled=False,
+            ).exclude(pk=self.pk).select_related(
+                'time_slot',
+                'teacher_assignment__teacher',
+                'room'
+            )
+
+            for entry in same_day:
+                if not parity_conflict(entry.week_parity, self.week_parity):
+                    continue
+
+                if not slots_overlap(entry.time_slot, self.time_slot):
+                    continue
+
+                if entry.student_group_id == self.student_group_id:
+                    errors['student_group'] = 'У группы есть пересечение по времени.'
+
+                if entry.teacher_assignment.teacher_id == self.teacher_assignment.teacher_id:
+                    errors['teacher_assignment'] = 'У преподавателя есть пересечение по времени.'
+
+                if self.room_id and entry.room_id == self.room_id:
+                    errors['room'] = 'Аудитория уже занята в это время.'
+
+            # Не больше 5 пар в день для группы
+            group_count = ScheduleEntry.objects.filter(
                 student_group=self.student_group,
                 working_day=self.working_day,
                 week_parity=self.week_parity,
                 is_cancelled=False
-            )
-            if self.pk:
-                qs = qs.exclude(pk=self.pk)
-            if qs.count() >= 5:
+            ).exclude(pk=self.pk).count()
+            if group_count >= 5:
                 errors['student_group'] = 'Для одной учебной группы в день не должно быть больше 5 пар.'
 
-        # 5. Не больше 5 пар в день для преподавателя
-        if self.teacher_assignment and self.working_day:
-            teacher = self.teacher_assignment.teacher
-            qs = ScheduleEntry.objects.filter(
-                teacher_assignment__teacher=teacher,
+            # Не больше 5 пар в день для преподавателя
+            teacher_count = ScheduleEntry.objects.filter(
+                teacher_assignment__teacher=self.teacher_assignment.teacher,
                 working_day=self.working_day,
                 week_parity=self.week_parity,
                 is_cancelled=False
-            )
-            if self.pk:
-                qs = qs.exclude(pk=self.pk)
-            if qs.count() >= 5:
+            ).exclude(pk=self.pk).count()
+            if teacher_count >= 5:
                 errors['teacher_assignment'] = 'Преподаватель не может работать больше 5 пар в день.'
 
-        # 6. Проверка четности недели
-        if self.working_day and self.week_parity != 'both':
-            if self.working_day.week_parity not in ['both', self.week_parity]:
+            # Чётность недели
+            if self.working_day.week_parity not in ['both', self.week_parity] and self.week_parity != 'both':
                 errors['week_parity'] = 'Чётность недели занятия не совпадает с чётностью рабочего дня.'
 
-        # 7. Переходы между корпусами для группы и преподавателя
-        if self.room and self.working_day and self.time_slot and self.student_group and self.teacher_assignment:
-            def get_travel_minutes(from_building, to_building):
-                if from_building.id == to_building.id:
-                    return 0
-
-                direct = BuildingDistance.objects.filter(
-                    from_building=from_building,
-                    to_building=to_building
-                ).first()
-
-                reverse = BuildingDistance.objects.filter(
-                    from_building=to_building,
-                    to_building=from_building
-                ).first()
-
-                dist = direct or reverse
-                if not dist:
-                    raise ValidationError(
-                        {'room': f'Не задано расстояние между корпусами "{from_building.name}" и "{to_building.name}".'}
-                    )
-                return dist.minutes
-
-            def minutes_between(start_time, end_time):
-                return int(
-                    (
-                            datetime.combine(self.working_day.date, start_time)
-                            - datetime.combine(self.working_day.date, end_time)
-                    ).total_seconds() / 60
-                )
-
-            def check_transition(subject_q, label):
-                previous_entry = (
-                    ScheduleEntry.objects.filter(
-                        working_day=self.working_day,
-                        is_cancelled=False,
-                    )
-                    .filter(subject_q)
-                    .exclude(pk=self.pk)
-                    .filter(time_slot__end_time__lte=self.time_slot.start_time)
-                    .select_related('room__building', 'time_slot')
-                    .order_by('-time_slot__end_time')
-                    .first()
-                )
-
-                if previous_entry and previous_entry.room and previous_entry.room.building_id != self.room.building_id:
-                    gap = minutes_between(self.time_slot.start_time, previous_entry.time_slot.end_time)
-                    travel = get_travel_minutes(previous_entry.room.building, self.room.building)
-                    if travel > gap:
-                        errors['room'] = (
-                            f'Недостаточно времени на переход между корпусами для {label}. '
-                            f'Нужно {travel} мин., есть {gap} мин.'
+            # Переходы между корпусами
+            if self.room and self.working_day and self.time_slot:
+                def get_travel_minutes(from_building, to_building):
+                    if from_building.id == to_building.id:
+                        return 0
+                    dist = BuildingDistance.objects.filter(
+                        from_building=from_building,
+                        to_building=to_building
+                    ).first() or BuildingDistance.objects.filter(
+                        from_building=to_building,
+                        to_building=from_building
+                    ).first()
+                    if not dist:
+                        raise ValidationError(
+                            {'room': f'Не задано расстояние между корпусами "{from_building.name}" и "{to_building.name}".'}
                         )
+                    return dist.minutes
 
-                next_entry = (
-                    ScheduleEntry.objects.filter(
-                        working_day=self.working_day,
-                        is_cancelled=False,
-                    )
-                    .filter(subject_q)
-                    .exclude(pk=self.pk)
-                    .filter(time_slot__start_time__gte=self.time_slot.end_time)
-                    .select_related('room__building', 'time_slot')
-                    .order_by('time_slot__start_time')
-                    .first()
-                )
+                def gap_minutes(start_time, end_time):
+                    dt1 = datetime.combine(self.working_day.date, start_time)
+                    dt2 = datetime.combine(self.working_day.date, end_time)
+                    return int((dt1 - dt2).total_seconds() / 60)
 
-                if next_entry and next_entry.room and next_entry.room.building_id != self.room.building_id:
-                    gap = minutes_between(next_entry.time_slot.start_time, self.time_slot.end_time)
-                    travel = get_travel_minutes(self.room.building, next_entry.room.building)
-                    if travel > gap:
-                        errors['room'] = (
-                            f'Недостаточно времени на переход между корпусами для {label}. '
-                            f'Нужно {travel} мин., есть {gap} мин.'
-                        )
+                affected = ScheduleEntry.objects.filter(
+                    working_day=self.working_day,
+                    week_parity=self.week_parity,
+                    is_cancelled=False
+                ).exclude(pk=self.pk).select_related('room__building', 'time_slot')
 
-            check_transition(Q(student_group=self.student_group), 'учебной группы')
-            check_transition(Q(teacher_assignment__teacher=self.teacher_assignment.teacher), 'преподавателя')
+                for entry in affected:
+                    if not entry.room:
+                        continue
+
+                    # предыдущее занятие
+                    if entry.time_slot.end_time <= self.time_slot.start_time:
+                        if entry.student_group_id == self.student_group_id or entry.teacher_assignment.teacher_id == self.teacher_assignment.teacher_id:
+                            gap = gap_minutes(self.time_slot.start_time, entry.time_slot.end_time)
+                            travel = get_travel_minutes(entry.room.building, self.room.building)
+                            if travel > gap:
+                                errors['room'] = 'Недостаточно времени на переход между корпусами.'
+
+                    # следующее занятие
+                    if entry.time_slot.start_time >= self.time_slot.end_time:
+                        if entry.student_group_id == self.student_group_id or entry.teacher_assignment.teacher_id == self.teacher_assignment.teacher_id:
+                            gap = gap_minutes(entry.time_slot.start_time, self.time_slot.end_time)
+                            travel = get_travel_minutes(self.room.building, entry.room.building)
+                            if travel > gap:
+                                errors['room'] = 'Недостаточно времени на переход между корпусами.'
 
         if errors:
             raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
         self.full_clean()
-        return super().save(*args, **kwargs)
+        with transaction.atomic():
+            return super().save(*args, **kwargs)
 
     def __str__(self):
         return (
             f'{self.student_group.name} — {self.teacher_assignment.discipline.name} '
             f'({self.working_day.date}, {self.time_slot.pair_number} пара)'
         )
+
+
+class Semester(models.Model):
+    title = models.CharField(max_length=100, verbose_name="Семестр")
+    start_date = models.DateField(verbose_name="Дата начала")
+    weeks = models.PositiveSmallIntegerField(default=18, verbose_name="Количество недель")
+
+    class Meta:
+        verbose_name = "Семестр"
+        verbose_name_plural = "Семестры"
+
+    def __str__(self):
+        return self.title
+
+
+class Holiday(models.Model):
+    date = models.DateField(unique=True, verbose_name="Дата")
+    name = models.CharField(max_length=255, verbose_name="Название праздника")
+
+    class Meta:
+        verbose_name = "Праздник"
+        verbose_name_plural = "Праздники"
+
+    def __str__(self):
+        return f"{self.date}: {self.name}"
