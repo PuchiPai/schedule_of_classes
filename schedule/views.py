@@ -7,7 +7,7 @@ from django.shortcuts import redirect
 
 from collections import defaultdict
 from .models import StudentGroup, TimeSlot, Semester, ScheduleEntry, TeacherAssignment
-from .services import get_active_semester
+from .services import get_active_semester, get_group_workload_summary
 
 
 def copy_schedule_view(request):
@@ -416,3 +416,16 @@ def reschedule_entry_view(request, entry_id):
         messages.success(request, 'Занятие перенесено')
         return redirect('schedule:group_schedule', group_id=entry.student_group.id)
     return render(request, 'schedule/reschedule.html', {'entry': entry})
+
+
+def group_workload_report(request, group_id, semester_id):
+    group = get_object_or_404(StudentGroup, id=group_id)
+    semester = get_object_or_404(Semester, id=semester_id)
+    data = get_group_workload_summary(group_id, semester_id)
+
+    context = {
+        'group': group,
+        'semester': semester,
+        'workload_data': data,
+    }
+    return render(request, 'schedule/group_workload_report.html', context)

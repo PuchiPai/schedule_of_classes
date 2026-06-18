@@ -287,6 +287,16 @@ class Curriculum(models.Model):
     def pairs_per_week(self):
         return round((self.total_hours / 2) / self.weeks, 2) if self.weeks else 0
 
+    @property
+    def credit_units(self):
+        """
+        Расчёт зачётных единиц (ЗЕТ) по ФГОС.
+        Обычно 1 ЗЕТ = 27 академических часов (или 36, уточните у преподавателя).
+        """
+        if self.total_hours:
+            return round(self.total_hours / 27, 1)
+        return 0.0
+
 
 # 10. Учебное поручение
 class TeacherAssignment(models.Model):

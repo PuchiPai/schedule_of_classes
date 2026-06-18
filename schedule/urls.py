@@ -21,4 +21,5 @@ urlpatterns = [
     path('teacher-workload/', views.teacher_workload_view, name='teacher_workload'),
     path('copy-schedule/', views.copy_schedule_view, name='copy_schedule'),
     path('reschedule/<int:entry_id>/', views.reschedule_entry_view, name='reschedule_entry'),
+    path('report/group-workload/<int:group_id>/<int:semester_id>/', views.group_workload_report, name='group_workload_report'),
 ]

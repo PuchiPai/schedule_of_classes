@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Нагрузка группы {{ group.name }} за семестр {{ semester.name }}</h2>
+<table class="table">
+    <thead>
+        <tr><th>Тип занятия</th><th>Часов</th><th>Количество пар</th></tr>
+    </thead>
+    <tbody>
+    {% for item in workload_data %}
+        <tr>
+            <td>{{ item.lesson_type__name }}</td>
+            <td>{{ item.total_hours|floatformat:1 }}</td>
+            <td>{{ item.total_lessons }}</td>
+        </tr>
+    {% empty %}
+        <tr><td colspan="3">Нет данных</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+<a href="{% url 'some_back_url' %}">Назад</a>
+{% endblock %}
