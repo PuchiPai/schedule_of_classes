@@ -117,25 +117,52 @@ def home_view(request):
 
 def group_schedule_view(request, group_id):
     group = get_object_or_404(StudentGroup, pk=group_id)
+    week_parity = request.GET.get('week_parity', 'all')
 
-    week_parity = request.GET.get('week_parity', 'all')  # all / even / odd / both
-    entries = get_group_schedule(group)
-
-    if week_parity in ['even', 'odd', 'both']:
-        entries = entries.filter(week_parity=week_parity)
-
-    time_slots = list(TimeSlot.objects.all().order_by('pair_number'))
-    day_numbers = [1, 2, 3, 4, 5, 6]
-
-    cells = defaultdict(list)
-    for entry in entries.select_related(
+    # Получаем все записи для группы (активные, текущий семестр)
+    from .services import get_active_semester
+    semester = get_active_semester()
+    qs = ScheduleEntry.objects.filter(
+        student_group=group,
+        semester=semester,
+        is_cancelled=False
+    ).select_related(
         'teacher_assignment__teacher',
         'teacher_assignment__discipline',
         'teacher_assignment__lesson_type',
         'room__building',
         'time_slot',
         'working_day'
-    ):
+    )
+
+    if week_parity in ['even', 'odd', 'both']:
+        qs = qs.filter(week_parity=week_parity)
+
+    # --- УНИКАЛИЗАЦИЯ: оставляем только первую запись для каждого набора видимых полей ---
+    seen = set()
+    unique_entries = []
+    for entry in qs:
+        key = (
+            entry.student_group_id,
+            entry.working_day_id,
+            entry.time_slot_id,
+            entry.week_parity,
+            entry.teacher_assignment.teacher_id,        # сам преподаватель
+            entry.teacher_assignment.discipline_id,     # дисциплина
+            entry.teacher_assignment.lesson_type_id,    # тип занятия
+            entry.room_id if entry.room else None,
+            entry.location_type,
+        )
+        if key not in seen:
+            seen.add(key)
+            unique_entries.append(entry)
+
+    # --- Формируем сетку ---
+    time_slots = list(TimeSlot.objects.all().order_by('pair_number'))
+    day_numbers = [1, 2, 3, 4, 5, 6]
+
+    cells = defaultdict(list)
+    for entry in unique_entries:
         cells[(entry.time_slot.pair_number, entry.working_day.weekday)].append(entry)
 
     rows = []

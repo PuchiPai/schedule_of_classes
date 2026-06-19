@@ -3,39 +3,49 @@
 {% block title %}Консультации / зачёты / экзамены{% endblock %}
 
 {% block content %}
-<h1>Расписание консультаций, зачётов и экзаменов</h1>
 
-<!-- Переключатель типа аттестации -->
+<div class="page-header">
+    <h1>📅 Расписание аттестации</h1>
+    <p class="muted">Консультации, зачёты и экзамены</p>
+</div>
+
+<!-- Переключатель типа -->
 <div class="kind-switcher">
-    <a href="?kind=all{% for gid in selected_ids %}&group={{ gid }}{% endfor %}"
-       class="kind-btn {% if kind == 'all' %}active{% endif %}">Все</a>
     <a href="?kind=consultation{% for gid in selected_ids %}&group={{ gid }}{% endfor %}"
        class="kind-btn {% if kind == 'consultation' %}active{% endif %}">Консультации</a>
+
     <a href="?kind=credit{% for gid in selected_ids %}&group={{ gid }}{% endfor %}"
        class="kind-btn {% if kind == 'credit' %}active{% endif %}">Зачёты</a>
+
     <a href="?kind=exam{% for gid in selected_ids %}&group={{ gid }}{% endfor %}"
        class="kind-btn {% if kind == 'exam' %}active{% endif %}">Экзамены</a>
 </div>
 
-<!-- Фильтр по группам -->
-<form method="get" class="filter-form">
+<!-- Фильтр -->
+<form method="get" class="filter-card">
     <input type="hidden" name="kind" value="{{ kind }}">
+
     <div class="filter-header">
-        <strong>Фильтр по группам:</strong>
-        <button type="submit" class="btn-apply">Показать</button>
+        <div>
+            <strong>🎓 Фильтр по группам</strong>
+            <div class="muted">Выберите одну или несколько групп</div>
+        </div>
+        <button type="submit" class="btn-primary">Применить</button>
     </div>
+
     <div class="groups-grid">
         {% for group in all_groups %}
-            <label class="group-checkbox">
-                <input type="checkbox" name="group" value="{{ group.id }}"
-                       {% if group.id|stringformat:"s" in selected_ids %}checked{% endif %}>
-                {{ group.name }}
-            </label>
+        <label class="group-chip">
+            <input type="checkbox" name="group" value="{{ group.id }}"
+                   {% if group.id|stringformat:"s" in selected_ids %}checked{% endif %}>
+            <span>{{ group.name }}</span>
+        </label>
         {% endfor %}
     </div>
 </form>
 
 {% if entries %}
+<div class="table-wrapper">
     <table class="attestation-table">
         <thead>
             <tr>
@@ -52,67 +62,78 @@
         </thead>
         <tbody>
             {% for entry in entries %}
-                <tr>
-                    <td>{{ entry.working_day.date|date:"d.m.Y" }}</td>
-                    <td>{{ entry.working_day.get_weekday_display }}</td>
-                    <td><strong>{{ entry.time_slot.pair_number }}</strong></td>
-                    <td>{{ entry.time_slot.start_time|time:"H:i" }} - {{ entry.time_slot.end_time|time:"H:i" }}</td>
-                    <td><strong>{{ entry.student_group.name }}</strong></td>
-                    <td>{{ entry.teacher_assignment.discipline.name }}</td>
-                    <td>{{ entry.teacher_assignment.lesson_type.name }}</td>
-                    <td>{{ entry.teacher_assignment.teacher.full_name }}</td>
-                    <td>
-                        {% if entry.room %}
-                             {{ entry.room.name }} ({{ entry.room.building.name }})
-                        {% else %}
-                            💻 Онлайн
-                        {% endif %}
-                    </td>
-                </tr>
+            <tr>
+                <td>{{ entry.working_day.date|date:"d.m.Y" }}</td>
+                <td>{{ entry.working_day.get_weekday_display }}</td>
+                <td><span class="badge">{{ entry.time_slot.pair_number }}</span></td>
+                <td>{{ entry.time_slot.start_time|time:"H:i" }} - {{ entry.time_slot.end_time|time:"H:i" }}</td>
+                <td><strong>{{ entry.student_group.name }}</strong></td>
+                <td>{{ entry.teacher_assignment.discipline.name }}</td>
+                <td>
+                    <span class="tag">{{ entry.teacher_assignment.lesson_type.name }}</span>
+                </td>
+                <td>{{ entry.teacher_assignment.teacher.full_name }}</td>
+                <td>
+                    {% if entry.room %}
+                        🏫 {{ entry.room.name }}
+                    {% else %}
+                        💻 Онлайн
+                    {% endif %}
+                </td>
+            </tr>
             {% endfor %}
         </tbody>
     </table>
+</div>
 {% else %}
-    <div class="empty-state">
-        <p>Записей об аттестации нет.</p>
-    </div>
+<div class="empty">
+    <p>📭 Записей об аттестации нет</p>
+</div>
 {% endif %}
 
 <style>
-/* Переключатель типа */
+.page-header {
+    margin-bottom: 20px;
+}
+
+.muted {
+    color: #7a7a7a;
+    font-size: 14px;
+}
+
+/* SWITCHER */
 .kind-switcher {
     display: flex;
     gap: 10px;
-    margin-bottom: 20px;
     flex-wrap: wrap;
+    margin-bottom: 18px;
 }
 
 .kind-btn {
-    padding: 10px 20px;
-    background-color: #ecf0f1;
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: #eef2f7;
     color: #2c3e50;
     text-decoration: none;
-    border-radius: 6px;
-    font-weight: bold;
-    transition: all 0.2s;
-    border: 2px solid transparent;
+    font-weight: 600;
+    transition: 0.2s;
 }
 
 .kind-btn:hover {
-    background-color: #d5dbdb;
+    background: #dfe7f1;
 }
 
 .kind-btn.active {
-    background-color: #c0392b;
+    background: #2c3e50;
     color: white;
-    border-color: #922b21;
 }
 
-/* Фильтр */
-.filter-form {
-    background-color: #f8f9fa;
-    padding: 20px;
-    border-radius: 8px;
+/* FILTER CARD */
+.filter-card {
+    background: white;
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
     margin-bottom: 20px;
 }
 
@@ -120,95 +141,97 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 15px;
+    margin-bottom: 12px;
 }
 
-.filter-header strong {
-    font-size: 16px;
-    color: #2c3e50;
+.btn-primary {
+    background: #2c3e50;
+    color: white;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
 }
 
+.btn-primary:hover {
+    background: #1f2b38;
+}
+
+/* GROUPS */
 .groups-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    display: flex;
+    flex-wrap: wrap;
     gap: 8px;
 }
 
-.group-checkbox {
-    display: block;
+.group-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     padding: 6px 10px;
-    background-color: white;
-    border: 1px solid #ddd;
-    border-radius: 4px;
+    border: 1px solid #e5e5e5;
+    border-radius: 999px;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 13px;
+    background: #fafafa;
 }
 
-.group-checkbox:hover {
-    background-color: #fdedec;
+.group-chip:hover {
+    background: #f0f4ff;
 }
 
-.group-checkbox input {
-    margin-right: 6px;
+/* TABLE */
+.table-wrapper {
+    overflow-x: auto;
 }
 
-.btn-apply {
-    padding: 8px 20px;
-    background-color: #c0392b;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: bold;
-    font-size: 14px;
-}
-
-.btn-apply:hover {
-    background-color: #922b21;
-}
-
-/* Таблица аттестации */
 .attestation-table {
     width: 100%;
     border-collapse: collapse;
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
     font-size: 13px;
-    background-color: white;
-    margin-top: 20px;
-}
-
-.attestation-table th,
-.attestation-table td {
-    border: 1px solid #ddd;
-    padding: 8px;
-    text-align: left;
-    vertical-align: top;
 }
 
 .attestation-table th {
-    background-color: #922b21;
+    background: #2c3e50;
     color: white;
-    font-weight: bold;
-    position: sticky;
-    top: 0;
+    padding: 10px;
+    text-align: left;
 }
 
-.attestation-table tr:nth-child(even) {
-    background-color: #f9f9f9;
+.attestation-table td {
+    padding: 10px;
+    border-bottom: 1px solid #eee;
 }
 
 .attestation-table tr:hover {
-    background-color: #fef9f9;
+    background: #f6f9ff;
 }
 
-/* Пустое состояние */
-.empty-state {
+.badge {
+    background: #3498db;
+    color: white;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.tag {
+    background: #ecf0f1;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+/* EMPTY */
+.empty {
     text-align: center;
-    padding: 40px;
-    background-color: #f8f9fa;
-    border-radius: 8px;
-    color: #7f8c8d;
-    font-size: 16px;
-    margin-top: 20px;
+    padding: 30px;
+    color: #888;
 }
 </style>
+
 {% endblock %}
