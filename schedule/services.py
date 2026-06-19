@@ -31,9 +31,9 @@ MAX_PAIRS_PER_DAY = 5
 
 def get_active_semester():
     """
-    Возвращает активный семестр.
-    Если есть семестр, который уже начался, берём последний по start_date.
-    Иначе — самый поздний из созданных.
+    Возвращает активный семестр (текущий или ближайший).
+    Сначала ищет семестр, дата начала которого <= сегодня.
+    Если такого нет, возвращает самый поздний созданный семестр.
     """
     today = date.today()
     semester = Semester.objects.filter(start_date__lte=today).order_by('-start_date').first()
@@ -43,12 +43,21 @@ def get_active_semester():
 
 
 def _slot_minutes(slot: TimeSlot) -> int:
+    """
+    Возвращает продолжительность временного слота в минутах.
+    Используется для расчёта длительности пары.
+    """
     start = datetime.combine(date.min, slot.start_time)
     end = datetime.combine(date.min, slot.end_time)
     return int((end - start).total_seconds() / 60)
 
 
 def _travel_minutes(from_building, to_building) -> int:
+    """
+    Возвращает время (в минутах) на перемещение между двумя корпусами.
+    Если расстояние не задано, выбрасывает ValidationError.
+    Если корпуса одинаковые, возвращает 0.
+    """
     if from_building.id == to_building.id:
         return 0
 
@@ -72,14 +81,19 @@ def _travel_minutes(from_building, to_building) -> int:
 
 
 def _parity_matches(existing_parity: str, new_parity: str) -> bool:
+    """
+    Проверяет, совместимы ли две чётности (например, 'both' и 'even').
+    Возвращает True, если они могут пересекаться (одна из них 'both' или равны).
+    """
     return existing_parity == 'both' or new_parity == 'both' or existing_parity == new_parity
 
 
 def _sequence_is_valid(entries, candidate) -> bool:
     """
-    Проверяет:
-    - нет ли перерыва больше 90 минут;
-    - хватает ли времени на переход между корпусами.
+    Проверяет последовательность занятий на допустимость:
+    - Перерыв между соседними парами не должен превышать 90 минут.
+    - Если занятия в разных корпусах, время на перемещение должно быть меньше перерыва.
+    Возвращает True, если все условия выполнены.
     """
     ordered = list(entries) + [candidate]
     ordered.sort(key=lambda x: x.time_slot.start_time)
@@ -114,6 +128,11 @@ def create_schedule_entry(
     is_cancelled=False,
     replacement=None,
 ):
+    """
+    Создаёт новую запись в расписании (одно занятие).
+    Выполняет валидацию через full_clean() и сохраняет в БД.
+    Если location_type='online', то room игнорируется (устанавливается None).
+    """
     semester = semester or get_active_semester()
     if semester is None:
         raise ValidationError('Не создан ни один семестр.')
@@ -139,6 +158,10 @@ def create_schedule_entry(
 
 
 def cancel_schedule_entry(entry_id):
+    """
+    Отменяет занятие (устанавливает is_cancelled=True) по его ID.
+    Возвращает обновлённую запись.
+    """
     entry = ScheduleEntry.objects.get(pk=entry_id)
     entry.is_cancelled = True
     entry.save(update_fields=['is_cancelled'])
@@ -148,7 +171,10 @@ def cancel_schedule_entry(entry_id):
 @transaction.atomic
 def copy_schedule_for_day(source_day, target_day, semester=None, week_parity=None):
     """
-    Копирует занятия с одного дня на другой.
+    Копирует все занятия с одного рабочего дня на другой (в рамках одного семестра).
+    Можно отфильтровать по чётности.
+    Создаёт новые записи с заменой дня, сохраняя остальные поля.
+    Возвращает список созданных записей.
     """
     semester = semester or get_active_semester()
     if semester is None:
@@ -185,6 +211,11 @@ def copy_schedule_for_day(source_day, target_day, semester=None, week_parity=Non
 
 
 def get_group_schedule(student_group, semester=None):
+    """
+    Возвращает QuerySet всех активных занятий для указанной учебной группы в заданном семестре.
+    Сортировка по дате и времени.
+    Использует select_related для оптимизации.
+    """
     semester = semester or get_active_semester()
     qs = ScheduleEntry.objects.filter(
         semester=semester,
@@ -207,6 +238,10 @@ def get_group_schedule(student_group, semester=None):
 
 
 def get_teacher_schedule(teacher, semester=None):
+    """
+    Возвращает QuerySet всех активных занятий для указанного преподавателя в заданном семестре.
+    Сортировка по дате и времени.
+    """
     semester = semester or get_active_semester()
     qs = ScheduleEntry.objects.filter(
         semester=semester,
@@ -229,6 +264,10 @@ def get_teacher_schedule(teacher, semester=None):
 
 
 def get_room_load(room, semester=None):
+    """
+    Возвращает QuerySet всех активных занятий для указанного помещения в заданном семестре.
+    Сортировка по дате и времени.
+    """
     semester = semester or get_active_semester()
     qs = ScheduleEntry.objects.filter(
         semester=semester,
@@ -244,8 +283,8 @@ def get_room_load(room, semester=None):
 
 def get_main_student_group(academic_group):
     """
-    Берём основную учебную группу для академической группы.
-    Сначала пробуем полную группу, если её нет — любую первую.
+    Возвращает основную (полную) учебную группу для академической группы.
+    Если полной нет – берёт первую попавшуюся (подгруппу или поток).
     """
     group = (
         StudentGroup.objects
@@ -265,6 +304,10 @@ def get_main_student_group(academic_group):
 
 
 def get_lesson_type_for_part(part: str) -> LessonType:
+    """
+    По строковому идентификатору ('lecture', 'practice', 'lab') находит соответствующий тип занятия в БД.
+    Возвращает объект LessonType или выбрасывает ValidationError, если не найден.
+    """
     aliases = {
         'lecture': ['лекция'],
         'practice': ['практика', 'семинар'],
@@ -282,9 +325,10 @@ def get_lesson_type_for_part(part: str) -> LessonType:
 
 def get_room_for_part(part: str, students_count: int):
     """
-    Подбирает аудиторию под тип занятия и вместимость.
-    Если аудитория не найдена, для лекции/практики можно уйти в online.
-    Лабораторные без аудитории не ставим.
+    Подбирает подходящее помещение для типа занятия (лекция, практика, лаба).
+    Учитывается вместимость (>= students_count) и допустимые типы аудиторий.
+    Возвращает Room или None, если подходящего нет.
+    Для лабораторных – только lab/computer, иначе возвращает None.
     """
     room_types = {
         'lecture': ['lecture', 'hall'],
@@ -312,12 +356,12 @@ def slot_is_free(
     location_type='room',
 ):
     """
-    Проверяет, можно ли поставить занятие в данный слот.
+    Проверяет, свободен ли слот для данного занятия.
     Учитывает:
-    - пересечения,
-    - максимум 5 пар в день,
-    - переходы между корпусами,
-    - перерывы не более 1,5 часа.
+    - пересечения с другими занятиями для той же группы, того же преподавателя, той же аудитории;
+    - ограничение не более 5 пар в день для группы и преподавателя;
+    - перерывы не более 90 минут и время на переход между корпусами.
+    Возвращает True, если слот подходит.
     """
     semester = semester or get_active_semester()
     if semester is None:
@@ -403,8 +447,9 @@ def slot_is_free(
 
 def find_free_slot(semester=None, student_group=None, teacher_assignment=None, room=None, week_parity='both', location_type='room'):
     """
-    Ищет первый свободный слот.
-    Перебирает все рабочие дни семестра и все пары из справочника.
+    Ищет первый свободный слот (рабочий день + пара) для заданных параметров.
+    Перебирает все рабочие дни семестра и пары по порядку.
+    Возвращает кортеж (working_day, time_slot) или (None, None), если слотов нет.
     """
     semester = semester or get_active_semester()
     if semester is None:
@@ -440,8 +485,10 @@ def find_free_slot(semester=None, student_group=None, teacher_assignment=None, r
 
 def add_attestation_sessions(curriculum, student_group, semester=None, week_parity='both'):
     """
-    Добавляет консультацию и итоговую аттестацию
-    (зачёт или экзамен) по дисциплине.
+    Добавляет в расписание аттестационные мероприятия по дисциплине:
+    консультацию (если есть) и итоговую аттестацию (зачёт или экзамен) согласно типу в учебном плане.
+    Ищет свободные слоты и создаёт записи.
+    Возвращает список созданных объектов ScheduleEntry.
     """
     semester = semester or get_active_semester()
     if semester is None:
@@ -569,9 +616,11 @@ def generate_demo_schedule_from_curriculum(
     schedule_semester=None,
 ):
     """
-    Генератор расписания по учебному плану.
-    semester — номер семестра в учебном плане (поле Curriculum.semester).
-    schedule_semester — объект Semester, в который реально ставим занятия.
+    Генератор расписания на основе учебного плана (Curriculum).
+    Для каждой дисциплины в указанном семестре создаёт нужное количество занятий (лекций, практик, лаб) с расчётом количества пар по часам.
+    Также добавляет аттестации.
+    Если clear_existing=True – удаляет все старые записи для этой группы.
+    Возвращает список созданных занятий.
     """
     schedule_semester = schedule_semester or get_active_semester()
     if schedule_semester is None:
@@ -703,8 +752,9 @@ def generate_demo_schedule_from_curriculum(
 @transaction.atomic
 def move_schedule_entry(entry, new_day, new_slot, new_room=None, new_location_type=None, semester=None):
     """
-    Перенос занятия.
-    Сначала создаём новое занятие, потом отменяем старое.
+    Переносит существующее занятие на новый день и/или время.
+    Создаёт новую запись с параметрами переноса, а старую помечает как отменённую (replacement указывает на новую).
+    Возвращает новую запись.
     """
     semester = semester or entry.semester or get_active_semester()
     if semester is None:
@@ -735,6 +785,10 @@ def move_schedule_entry(entry, new_day, new_slot, new_room=None, new_location_ty
 
 
 def get_attestation_schedule(group_ids=None, kind='all', semester=None):
+    """
+    Возвращает QuerySet аттестационных занятий (консультации, зачёты, экзамены) для заданных групп и типа.
+    kind может быть 'all', 'exam', 'credit', 'consultation'.
+    """
     semester = semester or get_active_semester()
     if semester is None:
         return ScheduleEntry.objects.none()
@@ -768,6 +822,10 @@ def get_attestation_schedule(group_ids=None, kind='all', semester=None):
 
 @transaction.atomic
 def create_consultation(student_group, teacher_assignment, room, day, slot, semester=None):
+    """
+    Создаёт отдельное занятие-консультацию с чётностью 'both'.
+    Упрощённый метод для ручного добавления консультации.
+    """
     semester = semester or get_active_semester()
     if semester is None:
         raise ValidationError('Не создан ни один семестр.')
@@ -791,6 +849,11 @@ def create_consultation(student_group, teacher_assignment, room, day, slot, seme
 
 
 def get_department_teacher_plan(department, semester=None):
+    """
+    Возвращает кортеж (teachers, grouped_entries):
+    - teachers – QuerySet преподавателей подразделения,
+    - grouped_entries – словарь {teacher_id: список занятий} сгруппированных по преподавателю.
+    """
     semester = semester or get_active_semester()
     if semester is None:
         return Teacher.objects.none(), defaultdict(list)
@@ -829,6 +892,10 @@ def get_department_teacher_plan(department, semester=None):
 
 
 def get_multi_group_chessboard(groups, start_date=None, end_date=None, semester=None):
+    """
+    Формирует данные для шахматной ведомости (расписание для нескольких групп).
+    Возвращает кортеж (groups, board), где board – структура с днями и ячейками для каждой группы.
+    """
     semester = semester or get_active_semester()
     if semester is None:
         return [], []
@@ -897,6 +964,13 @@ def get_multi_group_chessboard(groups, start_date=None, end_date=None, semester=
 
 
 def get_room_summary(semester=None):
+    """
+    Возвращает три списка статистики по занятости помещений:
+    - по типам аудиторий,
+    - по корпусам,
+    - по временным слотам (парам).
+    Каждый список содержит агрегированные данные с количеством занятий.
+    """
     semester = semester or get_active_semester()
     if semester is None:
         return [], [], []
@@ -929,6 +1003,11 @@ def get_room_summary(semester=None):
 
 
 def get_department_teacher_plan_rows(department, semester=None):
+    """
+    Утилита для отчёта – возвращает список словарей для каждого преподавателя:
+    {'teacher': teacher, 'entries': [список занятий]}.
+    Использует get_department_teacher_plan.
+    """
     teachers, grouped = get_department_teacher_plan(department, semester=semester)
 
     result = []
@@ -943,8 +1022,9 @@ def get_department_teacher_plan_rows(department, semester=None):
 
 def get_group_workload_summary(student_group_id, semester_id):
     """
-    Возвращает список словарей с суммарной нагрузкой по типам занятий
-    для конкретной группы и семестра.
+    Возвращает сводку нагрузки по типам занятий для конкретной группы и семестра.
+    Агрегирует общее количество часов и количество занятий по каждому типу.
+    Результат – список словарей с полями: lesson_type_name, total_hours, total_lessons.
     """
     result = (
         ScheduleEntry.objects
